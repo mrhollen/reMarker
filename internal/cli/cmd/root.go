@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	initpkg "github.com/hollen/remarker/internal/application/init"
+	statuspkg "github.com/hollen/remarker/internal/application/status"
 	syncpkg "github.com/hollen/remarker/internal/application/sync"
 	"github.com/hollen/remarker/internal/infrastructure/config"
 	"github.com/hollen/remarker/internal/infrastructure/localfs"
@@ -96,9 +97,37 @@ func newSyncCmd() *cobra.Command {
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show current sync status",
+		Short: "Show pending sync changes",
+		Long:  "Preview what changes would be made during a sync without applying them.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("not yet implemented")
+			cfg := config.Load()
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
+
+			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
+			localRepo := localfs.New(cfg.SyncDir)
+
+			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			if err != nil {
+				return fmt.Errorf("connect to device: %w", err)
+			}
+			defer sshClient.Close()
+
+			sftpClient, err := sftp.New(sshClient)
+			if err != nil {
+				return fmt.Errorf("initialize sftp: %w", err)
+			}
+			defer sftpClient.Close()
+
+			uc := statuspkg.NewStatusUseCase(sftpClient, localRepo, manifestRepo)
+			result, err := uc.Execute(context.Background())
+			if err != nil {
+				return err
+			}
+
+			fmt.Print(result.Summary())
+			return nil
 		},
 	}
 }
