@@ -10,22 +10,39 @@ Bidirectional sync between a local `documents/` directory and your reMarkable de
 # 1. Set your reMarkable password
 export REMARKABLE_PASSWORD="your-password-here"
 
-# 2. Build and initialize
-go build -o remarker ./cmd
+# 2. Initialize and sync
 ./remarker init
-
-# 3. Sync your documents
 ./remarker sync
 
-# 4. Or run continuously in watch mode
+# 3. Or run continuously in watch mode
 ./remarker watch
 ```
+
+See [Building from Source](#building-from-source) or [Docker](#docker) for installation options.
 
 ## Prerequisites
 
 - **Go 1.24+** (or use the Docker setup below)
 - **reMarkable 2** connected via USB cable
 - USB Ethernet bridge active at `10.11.99.1` (default)
+
+## Building from Source
+
+```bash
+git clone https://github.com/hollen/remarker.git
+cd remarker
+go build -o remarker ./cmd
+```
+
+This produces a single binary at `./remarker`. No additional dependencies or vendored libraries are needed.
+
+To install globally:
+
+```bash
+go install ./cmd
+```
+
+This places `remarker` in your `$GOPATH/bin` (or `$HOME/go/bin`).
 
 ## Setup
 
