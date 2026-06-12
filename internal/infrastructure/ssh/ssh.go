@@ -4,6 +4,7 @@
 package ssh
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,14 +25,29 @@ type Client struct {
 // Dial creates a new SSH connection to the specified host using password
 // authentication. It uses InsecureIgnoreHostKey for host key verification
 // (TOFU-style) since reMarkable devices are on a local USB Ethernet bridge.
-func Dial(host string, port int, user, password string) (*Client, error) {
+// The provided context controls the connection timeout: if the context has a
+// deadline, that deadline is used as the SSH dial timeout. If the context is
+// already cancelled, Dial returns immediately with an error.
+func Dial(ctx context.Context, host string, port int, user, password string) (*Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("ssh dial: context already done: %w", err)
+	}
+
+	timeout := 30 * time.Second
+	if dl, ok := ctx.Deadline(); ok {
+		remaining := time.Until(dl)
+		if remaining > 0 {
+			timeout = remaining
+		}
+	}
+
 	config := &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
+		Timeout:         timeout,
 	}
 
 	addr := fmt.Sprintf("%s:%d", host, port)

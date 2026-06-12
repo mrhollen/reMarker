@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	initpkg "github.com/hollen/remarker/internal/application/init"
 	statuspkg "github.com/hollen/remarker/internal/application/status"
@@ -69,7 +70,10 @@ func newSyncCmd() *cobra.Command {
 			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
 			localRepo := localfs.New(cfg.SyncDir)
 
-			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectionTimeout)
+			defer cancel()
+
+			sshClient, err := ssh.Dial(ctx, cfg.Host, cfg.Port, cfg.User, cfg.Password)
 			if err != nil {
 				return fmt.Errorf("connect to device: %w", err)
 			}
@@ -113,7 +117,10 @@ func newStatusCmd() *cobra.Command {
 			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
 			localRepo := localfs.New(cfg.SyncDir)
 
-			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectionTimeout)
+			defer cancel()
+
+			sshClient, err := ssh.Dial(ctx, cfg.Host, cfg.Port, cfg.User, cfg.Password)
 			if err != nil {
 				return fmt.Errorf("connect to device: %w", err)
 			}
@@ -151,7 +158,10 @@ func newWatchCmd() *cobra.Command {
 			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
 			localRepo := localfs.New(cfg.SyncDir)
 
-			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectionTimeout)
+			defer cancel()
+
+			sshClient, err := ssh.Dial(ctx, cfg.Host, cfg.Port, cfg.User, cfg.Password)
 			if err != nil {
 				return fmt.Errorf("connect to device: %w", err)
 			}
@@ -167,19 +177,19 @@ func newWatchCmd() *cobra.Command {
 
 			uc := watchpkg.NewWatchUseCase(sftpClient, localRepo, manifestRepo, w, cfg.SyncInterval)
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			watchCtx, watchCancel := context.WithCancel(context.Background())
+			defer watchCancel()
 
 			// Handle SIGINT/SIGTERM for graceful shutdown
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
 				<-sigChan
-				cancel()
+				watchCancel()
 			}()
 
 			fmt.Println("Watching for changes... (Ctrl+C to stop)")
-			return uc.Run(ctx)
+			return uc.Run(watchCtx)
 		},
 	}
 }
@@ -195,7 +205,13 @@ func newSSHCmd() *cobra.Command {
 				return fmt.Errorf("invalid config: %w", err)
 			}
 
-			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			// Use a longer timeout for the initial SSH connection phase of an
+			// interactive shell session, since the user may be slow to respond
+			// to prompts or the device may be sluggish on first connect.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
+			sshClient, err := ssh.Dial(ctx, cfg.Host, cfg.Port, cfg.User, cfg.Password)
 			if err != nil {
 				return fmt.Errorf("connect to device: %w", err)
 			}

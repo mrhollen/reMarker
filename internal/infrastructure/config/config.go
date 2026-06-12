@@ -9,43 +9,47 @@ import (
 
 // Environment variable names.
 const (
-	EnvPassword     = "REMARKABLE_PASSWORD"
-	EnvHost         = "REMARKABLE_HOST"
-	EnvPort         = "REMARKABLE_PORT"
-	EnvUser         = "REMARKABLE_USER"
-	EnvSyncDir      = "REMARKER_SYNC_DIR"
-	EnvSyncInterval = "SYNC_INTERVAL"
+	EnvPassword          = "REMARKABLE_PASSWORD"
+	EnvHost              = "REMARKABLE_HOST"
+	EnvPort              = "REMARKABLE_PORT"
+	EnvUser              = "REMARKABLE_USER"
+	EnvSyncDir           = "REMARKER_SYNC_DIR"
+	EnvSyncInterval      = "SYNC_INTERVAL"
+	EnvConnectionTimeout = "REMARKABLE_CONNECTION_TIMEOUT"
 )
 
 // Default values used when environment variables are not set or invalid.
 const (
-	defaultHost         = "10.11.99.1"
-	defaultPort         = 22
-	defaultUser         = "root"
-	defaultSyncDir      = "./documents"
-	defaultSyncInterval = 5 * time.Minute
+	defaultHost              = "10.11.99.1"
+	defaultPort              = 22
+	defaultUser              = "root"
+	defaultSyncDir           = "./documents"
+	defaultSyncInterval      = 5 * time.Minute
+	defaultConnectionTimeout = 30 * time.Second
 )
 
 // Config holds the application configuration loaded from environment variables.
 type Config struct {
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	SyncDir      string
-	SyncInterval time.Duration
+	Host              string
+	Port              int
+	User              string
+	Password          string
+	SyncDir           string
+	SyncInterval      time.Duration
+	ConnectionTimeout time.Duration
 }
 
 // Load reads configuration from environment variables and returns a Config
 // with defaults applied where values are not set.
 func Load() Config {
 	return Config{
-		Host:         envOr(EnvHost, defaultHost),
-		Port:         loadPort(),
-		User:         envOr(EnvUser, defaultUser),
-		Password:     os.Getenv(EnvPassword),
-		SyncDir:      envOr(EnvSyncDir, defaultSyncDir),
-		SyncInterval: loadDuration(),
+		Host:              envOr(EnvHost, defaultHost),
+		Port:              loadPort(),
+		User:              envOr(EnvUser, defaultUser),
+		Password:          os.Getenv(EnvPassword),
+		SyncDir:           envOr(EnvSyncDir, defaultSyncDir),
+		SyncInterval:      loadDuration(),
+		ConnectionTimeout: loadConnectionTimeout(),
 	}
 }
 
@@ -97,6 +101,20 @@ func loadDuration() time.Duration {
 	dur, err := time.ParseDuration(val)
 	if err != nil {
 		return defaultSyncInterval
+	}
+	return dur
+}
+
+// loadConnectionTimeout reads the SSH connection timeout from the environment
+// variable, falling back to defaultConnectionTimeout on parse error.
+func loadConnectionTimeout() time.Duration {
+	val := os.Getenv(EnvConnectionTimeout)
+	if val == "" {
+		return defaultConnectionTimeout
+	}
+	dur, err := time.ParseDuration(val)
+	if err != nil {
+		return defaultConnectionTimeout
 	}
 	return dur
 }

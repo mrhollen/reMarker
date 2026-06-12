@@ -1,12 +1,17 @@
 package ssh
 
 import (
+	"context"
 	"testing"
+	"time"
 )
 
 func TestDial_InvalidHost(t *testing.T) {
-	// Dial to a non-routable address should fail
-	_, err := Dial("192.0.2.1", 22, "root", "password")
+	// Dial to a non-routable address should fail — use short timeout
+	// so the test doesn't hang for 30 seconds.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := Dial(ctx, "192.0.2.1", 22, "root", "password")
 	if err == nil {
 		t.Error("Dial to invalid host should return error")
 	}
@@ -14,14 +19,14 @@ func TestDial_InvalidHost(t *testing.T) {
 
 func TestDial_InvalidPort(t *testing.T) {
 	// Port 0 is invalid
-	_, err := Dial("127.0.0.1", 0, "root", "password")
+	_, err := Dial(context.Background(), "127.0.0.1", 0, "root", "password")
 	if err == nil {
 		t.Error("Dial to invalid port should return error")
 	}
 }
 
 func TestDial_EmptyHost(t *testing.T) {
-	_, err := Dial("", 22, "root", "password")
+	_, err := Dial(context.Background(), "", 22, "root", "password")
 	if err == nil {
 		t.Error("Dial with empty host should return error")
 	}
@@ -87,7 +92,9 @@ func TestDial_Integration(t *testing.T) {
 
 	// This test requires a real SSH server. It will fail in CI but serves
 	// as a manual integration test when a reMarkable device is connected.
-	c, err := Dial("10.11.99.1", 22, "root", "test-password")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, "10.11.99.1", 22, "root", "test-password")
 	if err == nil {
 		// Connected — close and verify SSH() is non-nil
 		defer c.Close()
@@ -96,4 +103,40 @@ func TestDial_Integration(t *testing.T) {
 		}
 	}
 	// If err != nil, we expect it (wrong password or no device) — not a test failure
+}
+
+func TestDial_ContextDeadlineExceeded(t *testing.T) {
+	// Create a context that expires immediately
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	time.Sleep(5 * time.Millisecond) // ensure deadline has passed
+	cancel()
+
+	_, err := Dial(ctx, "127.0.0.1", 22, "root", "password")
+	if err == nil {
+		t.Error("Dial with expired context deadline should return error")
+	}
+}
+
+func TestDial_ContextCancellation(t *testing.T) {
+	// Create a context and cancel it before dialing
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Dial(ctx, "127.0.0.1", 22, "root", "password")
+	if err == nil {
+		t.Error("Dial with cancelled context should return error")
+	}
+}
+
+func TestDial_ContextTimeoutUsed(t *testing.T) {
+	// Dial with a very short context timeout to a host that won't respond
+	// quickly — should fail due to timeout, not just connection refused.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// 192.0.2.1 is TEST-NET-1, guaranteed unreachable
+	_, err := Dial(ctx, "192.0.2.1", 22, "root", "password")
+	if err == nil {
+		t.Error("Dial with short timeout to unreachable host should return error")
+	}
 }
