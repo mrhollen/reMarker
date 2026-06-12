@@ -1,8 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
+	initpkg "github.com/hollen/remarker/internal/application/init"
+	syncpkg "github.com/hollen/remarker/internal/application/sync"
+	"github.com/hollen/remarker/internal/infrastructure/config"
+	"github.com/hollen/remarker/internal/infrastructure/localfs"
+	"github.com/hollen/remarker/internal/infrastructure/manifeststore"
+	"github.com/hollen/remarker/internal/infrastructure/sftp"
+	"github.com/hollen/remarker/internal/infrastructure/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -31,8 +39,12 @@ func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a reMarkable sync configuration",
+		Long:  "Create the local .remarker/ directory and initialize the sync manifest.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("not yet implemented")
+			cfg := config.Load()
+			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
+			uc := initpkg.NewInitUseCase(manifestRepo)
+			return uc.Execute(context.Background())
 		},
 	}
 }
@@ -41,8 +53,42 @@ func newSyncCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "sync",
 		Short: "Sync documents with the reMarkable device",
+		Long:  "Perform a bidirectional sync between the local documents directory and the reMarkable device.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("not yet implemented")
+			cfg := config.Load()
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
+
+			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
+			localRepo := localfs.New(cfg.SyncDir)
+
+			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			if err != nil {
+				return fmt.Errorf("connect to device: %w", err)
+			}
+			defer sshClient.Close()
+
+			sftpClient, err := sftp.New(sshClient)
+			if err != nil {
+				return fmt.Errorf("initialize sftp: %w", err)
+			}
+			defer sftpClient.Close()
+
+			uc := syncpkg.NewSyncUseCase(sftpClient, localRepo, manifestRepo)
+			result, err := uc.Execute(context.Background())
+			if err != nil {
+				return err
+			}
+
+			if result.HasActions() || result.HasConflicts() || len(result.Errors) > 0 {
+				fmt.Printf("Sync complete: %d actions, %d conflicts, %d errors\n",
+					len(result.Actions), len(result.Conflicts), len(result.Errors))
+			} else {
+				fmt.Println("Already in sync.")
+			}
+
+			return nil
 		},
 	}
 }
