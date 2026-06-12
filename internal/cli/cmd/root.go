@@ -187,9 +187,21 @@ func newWatchCmd() *cobra.Command {
 func newSSHCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh",
-		Short: "Open an SSH session to the reMarkable device",
+		Short: "Open an SSH shell to the reMarkable device",
+		Long:  "Connect to the reMarkable device via SSH and open an interactive shell session.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("not yet implemented")
+			cfg := config.Load()
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
+
+			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			if err != nil {
+				return fmt.Errorf("connect to device: %w", err)
+			}
+			defer sshClient.Close()
+
+			return sshClient.Shell()
 		},
 	}
 }

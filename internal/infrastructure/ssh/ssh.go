@@ -5,6 +5,7 @@ package ssh
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -54,4 +55,34 @@ func (c *Client) SSH() *ssh.Client {
 		return nil
 	}
 	return c.conn
+}
+
+// Shell starts an interactive shell session on the remote host. It requests
+// a PTY and pipes stdin/stdout/stderr from the local terminal. It blocks
+// until the remote shell exits.
+func (c *Client) Shell() error {
+	if c == nil || c.conn == nil {
+		return fmt.Errorf("shell: no connection")
+	}
+
+	session, err := c.conn.NewSession()
+	if err != nil {
+		return fmt.Errorf("shell: new session: %w", err)
+	}
+	defer session.Close()
+
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+	if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
+		return fmt.Errorf("shell: request pty: %w", err)
+	}
+
+	session.Stdin = os.Stdin
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	return session.Shell()
 }

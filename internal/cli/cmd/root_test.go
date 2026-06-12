@@ -192,27 +192,49 @@ func TestStatusCommand(t *testing.T) {
 	})
 }
 
-func TestSubcommandsNotImplemented(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{name: "ssh"},
-	}
+func TestSSHCommand(t *testing.T) {
+	t.Run("returns error when password not set", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("REMARKER_SYNC_DIR", tmpDir)
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := NewRootCommand()
-			sub, _, err := cmd.Find([]string{tc.name})
-			if err != nil {
-				t.Fatalf("subcommand %q not found: %v", tc.name, err)
-			}
-			// RunE should return an error since it's a placeholder
-			err = sub.RunE(sub, nil)
-			if err == nil {
-				t.Errorf("expected subcommand %q to return an error (not yet implemented)", tc.name)
-			}
-		})
-	}
+		// Ensure REMARKABLE_PASSWORD is unset
+		os.Unsetenv("REMARKABLE_PASSWORD")
+
+		cmd := NewRootCommand()
+		sub, _, err := cmd.Find([]string{"ssh"})
+		if err != nil {
+			t.Fatalf("subcommand ssh not found: %v", err)
+		}
+
+		err = sub.RunE(sub, nil)
+		if err == nil {
+			t.Fatal("expected error when password not set, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid config") {
+			t.Errorf("expected error to contain 'invalid config', got: %v", err)
+		}
+	})
+
+	t.Run("returns error when cannot connect", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("REMARKER_SYNC_DIR", tmpDir)
+		t.Setenv("REMARKABLE_PASSWORD", "test")
+		t.Setenv("REMARKABLE_HOST", "invalid.invalid")
+
+		cmd := NewRootCommand()
+		sub, _, err := cmd.Find([]string{"ssh"})
+		if err != nil {
+			t.Fatalf("subcommand ssh not found: %v", err)
+		}
+
+		err = sub.RunE(sub, nil)
+		if err == nil {
+			t.Fatal("expected error when cannot connect, got nil")
+		}
+		if !strings.Contains(err.Error(), "connect to device") {
+			t.Errorf("expected error to contain 'connect to device', got: %v", err)
+		}
+	})
 }
 
 func TestWatchCommand(t *testing.T) {
