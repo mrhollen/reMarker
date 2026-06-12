@@ -6,9 +6,13 @@ package ssh
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 )
 
 // Client wraps an ssh.Client and provides a clean interface for SSH
@@ -58,8 +62,9 @@ func (c *Client) SSH() *ssh.Client {
 }
 
 // Shell starts an interactive shell session on the remote host. It requests
-// a PTY and pipes stdin/stdout/stderr from the local terminal. It blocks
-// until the remote shell exits.
+// a PTY with the local terminal's dimensions and pipes stdin/stdout/stderr
+// from the local terminal. It listens for SIGWINCH to forward resize events
+// to the remote side. It blocks until the remote shell exits.
 func (c *Client) Shell() error {
 	if c == nil || c.conn == nil {
 		return fmt.Errorf("shell: no connection")
@@ -71,18 +76,57 @@ func (c *Client) Shell() error {
 	}
 	defer session.Close()
 
+	// Get terminal size
+	width, height := getTerminalSize()
+
 	modes := ssh.TerminalModes{
 		ssh.ECHO:          1,
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}
-	if err := session.RequestPty("xterm-256color", 80, 40, modes); err != nil {
+	if err := session.RequestPty("xterm-256color", width, height, modes); err != nil {
 		return fmt.Errorf("shell: request pty: %w", err)
 	}
+
+	// Handle resize signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGWINCH)
+	go func() {
+		for range sigChan {
+			w, h := getTerminalSize()
+			if w > 0 && h > 0 {
+				session.WindowChange(w, h)
+			}
+		}
+	}()
+	defer signal.Stop(sigChan)
 
 	session.Stdin = os.Stdin
 	session.Stdout = os.Stdout
 	session.Stderr = os.Stderr
 
 	return session.Shell()
+}
+
+// getTerminalSize returns the current terminal dimensions. If the standard
+// input is not a terminal (e.g., piped input or test environment), it
+// returns the fallback size of 80x24.
+func getTerminalSize() (int, int) {
+	fd := int(os.Stdin.Fd())
+	if !isTerminal(fd) {
+		return 80, 24 // fallback for non-terminal
+	}
+	winsize, err := unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	if err != nil {
+		return 80, 24
+	}
+	return int(winsize.Col), int(winsize.Row)
+}
+
+// isTerminal checks whether the given file descriptor refers to a terminal
+// by attempting a TCGETS ioctl. Returns false on any error.
+func isTerminal(fd int) bool {
+	var mode uint32
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.TCGETS), uintptr(unsafe.Pointer(&mode)))
+	return errno == 0
 }

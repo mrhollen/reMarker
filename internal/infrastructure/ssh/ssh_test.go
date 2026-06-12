@@ -53,6 +53,33 @@ func TestSSH_ReturnsNilOnUninitializedClient(t *testing.T) {
 	}
 }
 
+func TestShell_NilClient(t *testing.T) {
+	var c *Client
+	err := c.Shell()
+	if err == nil {
+		t.Error("Shell() on nil client should return error")
+	}
+}
+
+func TestShell_NilConn(t *testing.T) {
+	c := &Client{}
+	err := c.Shell()
+	if err == nil {
+		t.Error("Shell() on nil conn should return error")
+	}
+}
+
+func TestGetTerminalSize_NonTerminal(t *testing.T) {
+	// In a test environment, stdin is not a terminal, so we expect fallback.
+	w, h := getTerminalSize()
+	if w != 80 {
+		t.Errorf("expected fallback width 80, got %d", w)
+	}
+	if h != 24 {
+		t.Errorf("expected fallback height 24, got %d", h)
+	}
+}
+
 func TestDial_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
