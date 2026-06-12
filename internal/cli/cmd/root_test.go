@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	initpkg "github.com/hollen/remarker/internal/application/init"
 )
@@ -117,6 +120,52 @@ func TestSyncCommand(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "connect to device") {
 			t.Errorf("expected error to contain 'connect to device', got: %v", err)
+		}
+	})
+
+	t.Run("gracefully cancels when context is done", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("REMARKER_SYNC_DIR", tmpDir)
+		t.Setenv("REMARKABLE_PASSWORD", "test")
+		t.Setenv("REMARKABLE_HOST", "127.0.0.1")
+
+		cmd := NewRootCommand()
+		sub, _, err := cmd.Find([]string{"sync"})
+		if err != nil {
+			t.Fatalf("subcommand sync not found: %v", err)
+		}
+
+		// Create a context that is already cancelled to simulate Ctrl+C
+		// before the sync operation starts
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+		sub.SetContext(ctx)
+
+		// Run in a goroutine so we can enforce a timeout
+		var runErr error
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runErr = sub.RunE(sub, nil)
+		}()
+
+		// Wait for completion with a generous timeout
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Command completed — verify it returned cleanly on cancellation
+			// The command should either return nil (graceful) or a context-related error
+			if runErr != nil && !strings.Contains(strings.ToLower(runErr.Error()), "cancel") {
+				t.Errorf("expected graceful cancellation or nil, got unexpected error: %v", runErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("sync command did not return within timeout — context cancellation not respected")
 		}
 	})
 }

@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	initpkg "github.com/hollen/remarker/internal/application/init"
 	statuspkg "github.com/hollen/remarker/internal/application/status"
 	syncpkg "github.com/hollen/remarker/internal/application/sync"
@@ -18,7 +20,6 @@ import (
 	"github.com/hollen/remarker/internal/infrastructure/sftp"
 	"github.com/hollen/remarker/internal/infrastructure/ssh"
 	"github.com/hollen/remarker/internal/infrastructure/watcher"
-	"github.com/spf13/cobra"
 )
 
 // NewRootCommand creates the root cobra command for the reMarkable syncing CLI.
@@ -57,11 +58,11 @@ func newInitCmd() *cobra.Command {
 }
 
 func newSyncCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync documents with the reMarkable device",
 		Long:  "Perform a bidirectional sync between the local documents directory and the reMarkable device.",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg := config.Load()
 			if err := cfg.Validate(); err != nil {
 				return fmt.Errorf("invalid config: %w", err)
@@ -70,8 +71,20 @@ func newSyncCmd() *cobra.Command {
 			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
 			localRepo := localfs.New(cfg.SyncDir)
 
-			ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectionTimeout)
+			parentCtx := cmd.Context()
+			if parentCtx == nil {
+				parentCtx = context.Background()
+			}
+			ctx, cancel := context.WithCancel(parentCtx)
 			defer cancel()
+
+			// Handle SIGINT/SIGTERM for graceful shutdown
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigChan
+				cancel()
+			}()
 
 			sshClient, err := ssh.Dial(ctx, cfg.Host, cfg.Port, cfg.User, cfg.Password)
 			if err != nil {
@@ -86,7 +99,7 @@ func newSyncCmd() *cobra.Command {
 			defer sftpClient.Close()
 
 			uc := syncpkg.NewSyncUseCase(sftpClient, localRepo, manifestRepo)
-			result, err := uc.Execute(context.Background())
+			result, err := uc.Execute(ctx)
 			if err != nil {
 				return err
 			}
@@ -101,6 +114,7 @@ func newSyncCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
 }
 
 func newStatusCmd() *cobra.Command {
