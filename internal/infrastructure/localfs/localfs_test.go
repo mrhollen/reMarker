@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -323,7 +324,7 @@ func TestListFiles_CreatesBaseDir(t *testing.T) {
 	}
 }
 
-func TestListFiles_ContextCancellation(t *testing.T) {
+func TestListFiles_ContextCancellation_Immediate(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := New(tmpDir)
 
@@ -331,9 +332,47 @@ func TestListFiles_ContextCancellation(t *testing.T) {
 	cancel() // Cancel immediately
 
 	_, err := c.ListFiles(ctx)
-	// We may or may not get an error depending on timing, but it shouldn't panic
 	if err == nil {
-		// If no error, that's acceptable (empty dir returns quickly)
+		t.Error("expected error for cancelled context, got nil")
+	}
+}
+
+func TestListFiles_ContextCancellation_DuringWalk(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	// Create many files across subdirectories so the walk takes meaningful time
+	// and we can reliably cancel mid-traversal
+	for i := 0; i < 500; i++ {
+		dir := fmt.Sprintf("sub-%03d", i/10)
+		name := fmt.Sprintf("file-%04d.metadata", i)
+		fullPath := filepath.Join(tmpDir, dir, name)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(fullPath, []byte("data"), 0644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel after a very short delay — walk should still be in progress
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.ListFiles(ctx)
+		done <- err
+	}()
+
+	time.AfterFunc(1*time.Millisecond, cancel)
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("expected error for cancelled context, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ListFiles did not return after context was cancelled")
 	}
 }
 
@@ -393,6 +432,25 @@ func TestGetFile_NonExistentFile(t *testing.T) {
 	}
 }
 
+func TestGetFile_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	// Create a file so the path is valid
+	filePath := filepath.Join(tmpDir, "test.metadata")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := c.GetFile(ctx, "test.metadata")
+	if err == nil {
+		t.Error("expected error for cancelled context, got nil")
+	}
+}
+
 func TestGetFile_EmptyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	c := New(tmpDir)
@@ -421,6 +479,26 @@ func TestGetFile_EmptyFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 // PutFile
 // ---------------------------------------------------------------------------
+
+func TestPutFile_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	file := document.File{
+		Path:    "new-file.metadata",
+		Size:    100,
+		ModTime: time.Now(),
+		Hash:    "somehash",
+	}
+
+	err := c.PutFile(ctx, file)
+	if err == nil {
+		t.Error("expected error for cancelled context, got nil")
+	}
+}
 
 func TestPutFile_CreatesFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -547,6 +625,30 @@ func TestPutFile_OverwritesExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 // DeleteFile
 // ---------------------------------------------------------------------------
+
+func TestDeleteFile_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	// Create a file so the path is valid
+	filePath := filepath.Join(tmpDir, "to-delete.metadata")
+	if err := os.WriteFile(filePath, []byte("delete me"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err := c.DeleteFile(ctx, "to-delete.metadata")
+	if err == nil {
+		t.Error("expected error for cancelled context, got nil")
+	}
+
+	// Verify file was NOT deleted (context checked before operation)
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		t.Error("file should not have been deleted when context was cancelled")
+	}
+}
 
 func TestDeleteFile_RemovesFile(t *testing.T) {
 	tmpDir := t.TempDir()

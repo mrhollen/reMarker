@@ -34,6 +34,10 @@ func New(baseDir string) *Client {
 // ".remarker" are skipped entirely. Results are sorted by path for
 // deterministic output. If the base directory does not exist, it is created.
 func (c *Client) ListFiles(ctx context.Context) ([]document.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("localfs list: %w", err)
+	}
+
 	// Create baseDir if it doesn't exist
 	if err := os.MkdirAll(c.baseDir, 0755); err != nil {
 		return nil, fmt.Errorf("localfs mkdir %s: %w", c.baseDir, err)
@@ -44,6 +48,11 @@ func (c *Client) ListFiles(ctx context.Context) ([]document.File, error) {
 	err := filepath.WalkDir(c.baseDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+
+		// Check context before processing each entry
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("localfs list: %w", err)
 		}
 
 		// Skip directories (we only want regular files)
@@ -107,6 +116,10 @@ func (c *Client) ListFiles(ctx context.Context) ([]document.File, error) {
 // metadata including the SHA256 hash. The path is relative to the base
 // directory.
 func (c *Client) GetFile(ctx context.Context, path string) (document.File, error) {
+	if err := ctx.Err(); err != nil {
+		return document.File{}, fmt.Errorf("localfs get: %w", err)
+	}
+
 	fullPath := filepath.Join(c.baseDir, path)
 
 	info, err := os.Stat(fullPath)
@@ -139,6 +152,10 @@ func (c *Client) GetFile(ctx context.Context, path string) (document.File, error
 // placeholder; the actual content transfer is handled at the application layer.
 // The modification time is set to the value provided in the File struct.
 func (c *Client) PutFile(ctx context.Context, file document.File) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("localfs put: %w", err)
+	}
+
 	fullPath := filepath.Join(c.baseDir, file.Path)
 
 	// Ensure parent directory exists
@@ -165,6 +182,10 @@ func (c *Client) PutFile(ctx context.Context, file document.File) error {
 // DeleteFile removes a file from the local filesystem. The path is relative
 // to the base directory.
 func (c *Client) DeleteFile(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("localfs delete: %w", err)
+	}
+
 	fullPath := filepath.Join(c.baseDir, path)
 
 	err := os.Remove(fullPath)
