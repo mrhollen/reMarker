@@ -1,0 +1,73 @@
+package document
+
+import (
+	"context"
+)
+
+// Compile-time interface checks ensure implementations in infrastructure
+// satisfy the domain contracts.
+
+var (
+	_ DeviceRepository    = (*deviceRepositoryImpl)(nil)
+	_ LocalRepository     = (*localRepositoryImpl)(nil)
+	_ ManifestRepository  = (*manifestRepositoryImpl)(nil)
+)
+
+// deviceRepositoryImpl is a dummy type used solely for compile-time
+// verification that DeviceRepository is a valid interface with the
+// expected method signatures.
+type deviceRepositoryImpl struct{}
+
+func (d *deviceRepositoryImpl) ListFiles(ctx context.Context) ([]File, error) {
+	return nil, nil
+}
+
+func (d *deviceRepositoryImpl) GetFile(ctx context.Context, path string) (File, error) {
+	return File{}, nil
+}
+
+func (d *deviceRepositoryImpl) PutFile(ctx context.Context, file File) error {
+	return nil
+}
+
+func (d *deviceRepositoryImpl) DeleteFile(ctx context.Context, path string) error {
+	return nil
+}
+
+// localRepositoryImpl is a dummy type used solely for compile-time
+// verification that LocalRepository is a valid interface with the
+// expected method signatures.
+type localRepositoryImpl struct{}
+
+func (l *localRepositoryImpl) ListFiles(ctx context.Context) ([]File, error) {
+	return nil, nil
+}
+
+func (l *localRepositoryImpl) GetFile(ctx context.Context, path string) (File, error) {
+	return File{}, nil
+}
+
+func (l *localRepositoryImpl) PutFile(ctx context.Context, file File) error {
+	return nil
+}
+
+func (l *localRepositoryImpl) DeleteFile(ctx context.Context, path string) error {
+	return nil
+}
+
+// manifestRepositoryImpl is a dummy type used solely for compile-time
+// verification that ManifestRepository is a valid interface with the
+// expected method signatures.
+type manifestRepositoryImpl struct{}
+
+func (m *manifestRepositoryImpl) Load(ctx context.Context) (*Manifest, error) {
+	return nil, nil
+}
+
+func (m *manifestRepositoryImpl) Save(ctx context.Context, manifest *Manifest) error {
+	return nil
+}
+
+func (m *manifestRepositoryImpl) Exists(ctx context.Context) (bool, error) {
+	return false, nil
+}
