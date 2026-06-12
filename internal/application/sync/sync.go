@@ -10,24 +10,34 @@ import (
 	domainErrors "github.com/hollen/remarker/internal/domain/errors"
 )
 
+// ProgressFunc is called after each sync action completes, providing
+// the current action number (1-indexed), total number of actions,
+// the action type string, and the file path.
+// It may be nil if the caller does not need progress updates.
+type ProgressFunc func(current, total int, action, path string)
+
 // SyncUseCase orchestrates a full sync cycle: planning, execution,
 // and manifest persistence.
 type SyncUseCase struct {
 	deviceRepo   document.DeviceRepository
 	localRepo    document.LocalRepository
 	manifestRepo document.ManifestRepository
+	onProgress   ProgressFunc
 }
 
 // NewSyncUseCase creates a new SyncUseCase with the given repositories.
+// The onProgress callback is optional and may be nil.
 func NewSyncUseCase(
 	deviceRepo document.DeviceRepository,
 	localRepo document.LocalRepository,
 	manifestRepo document.ManifestRepository,
+	onProgress ProgressFunc,
 ) *SyncUseCase {
 	return &SyncUseCase{
 		deviceRepo:   deviceRepo,
 		localRepo:    localRepo,
 		manifestRepo: manifestRepo,
+		onProgress:   onProgress,
 	}
 }
 
@@ -70,12 +80,17 @@ func (uc *SyncUseCase) Execute(ctx context.Context) (*document.SyncResult, error
 
 	// Phase 3: Execute actions
 	result := &document.SyncResult{}
-	for _, action := range actions {
+	for i, action := range actions {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
 		transferErr := uc.executeAction(ctx, action, manifest)
+
+		// Report progress after each action
+		if uc.onProgress != nil {
+			uc.onProgress(i+1, len(actions), string(action.ActionType), action.Path)
+		}
 		if transferErr != nil {
 	result.Errors = append(result.Errors, domainErrors.NewSyncError(action.Path, transferErr))
 			continue

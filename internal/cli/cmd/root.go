@@ -98,7 +98,9 @@ func newSyncCmd() *cobra.Command {
 			}
 			defer sftpClient.Close()
 
-			uc := syncpkg.NewSyncUseCase(sftpClient, localRepo, manifestRepo)
+			uc := syncpkg.NewSyncUseCase(sftpClient, localRepo, manifestRepo, func(current, total int, action, path string) {
+			fmt.Printf("[%d/%d] %s %s\n", current, total, action, path)
+		})
 			result, err := uc.Execute(ctx)
 			if err != nil {
 				return err

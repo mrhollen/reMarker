@@ -166,6 +166,200 @@ func (m *mockManifestRepository) Exists(_ context.Context) (bool, error) {
 var _ document.ManifestRepository = (*mockManifestRepository)(nil)
 
 // ---------------------------------------------------------------------------
+// Progress recording helper
+// ---------------------------------------------------------------------------
+
+// progressRecorder captures progress callback invocations for assertion.
+type progressRecorder struct {
+	calls []progressCall
+}
+
+type progressCall struct {
+	current int
+	total   int
+	action  string
+	path    string
+}
+
+func newProgressRecorder() *progressRecorder {
+	return &progressRecorder{calls: []progressCall{}}
+}
+
+func (r *progressRecorder) record(current, total int, action, path string) {
+	r.calls = append(r.calls, progressCall{
+		current: current,
+		total:   total,
+		action:  action,
+		path:    path,
+	})
+}
+
+func (r *progressRecorder) asProgressFunc() ProgressFunc {
+	return r.record
+}
+
+func TestExecute_ProgressCallback_SingleAction(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+
+	recorder := newProgressRecorder()
+
+	uc := NewSyncUseCase(
+		&mockDeviceRepository{files: map[string]document.File{}},
+		&mockLocalRepository{files: map[string]document.File{
+			"abc.metadata": file("abc.metadata", "localhash", 100, now),
+		}},
+		&mockManifestRepository{
+			manifest: manifest(1, map[string]document.ManifestEntry{}),
+		},
+		recorder.asProgressFunc(),
+	)
+
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	if !result.HasActions() {
+		t.Fatal("expected push action, got none")
+	}
+
+	if len(recorder.calls) != 1 {
+		t.Fatalf("expected 1 progress call, got %d", len(recorder.calls))
+	}
+
+	call := recorder.calls[0]
+	if call.current != 1 {
+		t.Errorf("expected current=1, got %d", call.current)
+	}
+	if call.total != 1 {
+		t.Errorf("expected total=1, got %d", call.total)
+	}
+	if call.action != string(document.ActionPush) {
+		t.Errorf("expected action=%q, got %q", document.ActionPush, call.action)
+	}
+	if call.path != "abc.metadata" {
+		t.Errorf("expected path=%q, got %q", "abc.metadata", call.path)
+	}
+}
+
+func TestExecute_ProgressCallback_MultipleActions(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+
+	recorder := newProgressRecorder()
+
+	uc := NewSyncUseCase(
+		&mockDeviceRepository{files: map[string]document.File{}},
+		&mockLocalRepository{files: map[string]document.File{
+			"a.metadata": file("a.metadata", "hash1", 100, now),
+			"b.metadata": file("b.metadata", "hash2", 200, now),
+		}},
+		&mockManifestRepository{
+			manifest: manifest(1, map[string]document.ManifestEntry{}),
+		},
+		recorder.asProgressFunc(),
+	)
+
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	if !result.HasActions() {
+		t.Fatal("expected push actions, got none")
+	}
+
+	if len(recorder.calls) != 2 {
+		t.Fatalf("expected 2 progress calls, got %d", len(recorder.calls))
+	}
+
+	if recorder.calls[0].current != 1 {
+		t.Errorf("first call: expected current=1, got %d", recorder.calls[0].current)
+	}
+	if recorder.calls[0].total != 2 {
+		t.Errorf("first call: expected total=2, got %d", recorder.calls[0].total)
+	}
+
+	if recorder.calls[1].current != 2 {
+		t.Errorf("second call: expected current=2, got %d", recorder.calls[1].current)
+	}
+	if recorder.calls[1].total != 2 {
+		t.Errorf("second call: expected total=2, got %d", recorder.calls[1].total)
+	}
+}
+
+func TestExecute_ProgressCallback_NilWorks(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+
+	uc := NewSyncUseCase(
+		&mockDeviceRepository{files: map[string]document.File{}},
+		&mockLocalRepository{files: map[string]document.File{
+			"abc.metadata": file("abc.metadata", "localhash", 100, now),
+		}},
+		&mockManifestRepository{
+			manifest: manifest(1, map[string]document.ManifestEntry{}),
+		},
+		nil, // nil progress callback
+	)
+
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error with nil progress: %v", err)
+	}
+
+	if !result.HasActions() {
+		t.Fatal("expected push action even with nil progress callback")
+	}
+}
+
+func TestExecute_ProgressCallback_NoActions(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+
+	recorder := newProgressRecorder()
+
+	uc := NewSyncUseCase(
+		&mockDeviceRepository{files: map[string]document.File{
+			"synced.metadata": file("synced.metadata", "samehash", 100, now),
+		}},
+		&mockLocalRepository{files: map[string]document.File{
+			"synced.metadata": file("synced.metadata", "samehash", 100, now),
+		}},
+		&mockManifestRepository{
+			manifest: manifest(1, map[string]document.ManifestEntry{
+				"synced.metadata": entry("synced.metadata", "samehash", 100, now, now),
+			}),
+		},
+		recorder.asProgressFunc(),
+	)
+
+	_, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	// Even though the file is in sync, planExisting produces an ActionNone
+	// for every tracked path, so we expect 1 progress call.
+	if len(recorder.calls) != 1 {
+		t.Fatalf("expected 1 progress call for synced file, got %d", len(recorder.calls))
+	}
+	if recorder.calls[0].current != 1 {
+		t.Errorf("expected current=1, got %d", recorder.calls[0].current)
+	}
+	if recorder.calls[0].total != 1 {
+		t.Errorf("expected total=1, got %d", recorder.calls[0].total)
+	}
+	if recorder.calls[0].action != string(document.ActionNone) {
+		t.Errorf("expected action=%s, got %s", document.ActionNone, recorder.calls[0].action)
+	}
+	if recorder.calls[0].path != "synced.metadata" {
+		t.Errorf("expected path=synced.metadata, got %s", recorder.calls[0].path)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -195,7 +389,7 @@ func manifest(version int, entries map[string]document.ManifestEntry) *document.
 // ---------------------------------------------------------------------------
 
 func TestNewSyncUseCase(t *testing.T) {
-	uc := NewSyncUseCase(&mockDeviceRepository{}, &mockLocalRepository{}, &mockManifestRepository{})
+	uc := NewSyncUseCase(&mockDeviceRepository{}, &mockLocalRepository{}, &mockManifestRepository{}, nil)
 	if uc == nil {
 		t.Fatal("NewSyncUseCase() returned nil")
 	}
@@ -210,6 +404,7 @@ func TestExecute_EmptySync(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -244,6 +439,7 @@ func TestExecute_NewLocalFile(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -281,6 +477,7 @@ func TestExecute_NewDeviceFile(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -323,6 +520,7 @@ func TestExecute_InSync(t *testing.T) {
 				"synced.metadata": entry("synced.metadata", hash, 100, now, now),
 			}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -358,6 +556,7 @@ func TestExecute_LocalModified(t *testing.T) {
 				"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
 			}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -397,6 +596,7 @@ func TestExecute_DeviceModified(t *testing.T) {
 				"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
 			}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -439,6 +639,7 @@ func TestExecute_Conflict(t *testing.T) {
 				"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
 			}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -487,6 +688,7 @@ func TestExecute_ConflictDeviceNewer(t *testing.T) {
 				"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
 			}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -520,7 +722,7 @@ func TestExecute_FileDeletedLocally(t *testing.T) {
 		}),
 	}
 
-	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo)
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
 	result, err := uc.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
@@ -561,7 +763,7 @@ func TestExecute_FileDeletedOnDevice(t *testing.T) {
 		}),
 	}
 
-	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo)
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
 	result, err := uc.Execute(ctx)
 	if err != nil {
 		t.Fatalf("Execute() unexpected error: %v", err)
@@ -589,6 +791,7 @@ func TestExecute_ManifestLoadFails(t *testing.T) {
 		&mockDeviceRepository{},
 		&mockLocalRepository{},
 		&mockManifestRepository{loadErr: loadErr},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -610,6 +813,7 @@ func TestExecute_DeviceListFails(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -631,6 +835,7 @@ func TestExecute_LocalListFails(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -659,6 +864,7 @@ func TestExecute_TransferFails(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -712,6 +918,7 @@ func TestExecute_MultipleFiles(t *testing.T) {
 				"conflict.metadata": entry("conflict.metadata", "originalhash", 100, manifestTime, manifestTime),
 			}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
@@ -764,6 +971,7 @@ func TestExecute_ManifestSaved(t *testing.T) {
 			"new.metadata": file("new.metadata", "newhash", 100, now),
 		}},
 		manifestRepo,
+		nil,
 	)
 
 	_, err := uc.Execute(ctx)
@@ -788,6 +996,7 @@ func TestExecute_ManifestTouched(t *testing.T) {
 		&mockDeviceRepository{files: map[string]document.File{}},
 		&mockLocalRepository{files: map[string]document.File{}},
 		manifestRepo,
+		nil,
 	)
 
 	_, err := uc.Execute(ctx)
@@ -813,6 +1022,7 @@ func TestExecute_ContextCancellation(t *testing.T) {
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
+		nil,
 	)
 
 	result, err := uc.Execute(ctx)
