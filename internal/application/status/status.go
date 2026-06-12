@@ -59,7 +59,7 @@ func (uc *StatusUseCase) Execute(ctx context.Context) (*StatusResult, error) {
 	// Load manifest
 	manifest, err := uc.manifestRepo.Load(ctx)
 	if err != nil {
-		return nil, domainErrors.ManifestError{Reason: err}
+		return nil, domainErrors.NewManifestError(err)
 	}
 
 	// List device files
