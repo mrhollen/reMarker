@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -187,6 +188,43 @@ func startTestSSHServer() (net.Listener, error) {
 	}()
 
 	return listener, nil
+}
+
+func TestIsTerminal_NonTerminal_ReturnsFalse(t *testing.T) {
+	// Create a pipe — the read end is definitely not a terminal.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	fd := int(r.Fd())
+	if isTerminal(fd) {
+		t.Error("expected isTerminal to return false for a pipe")
+	}
+}
+
+func TestGetTerminalSize_NonTerminal_ReturnsFallback(t *testing.T) {
+	// Replace stdin temporarily with a pipe fd so getTerminalSize
+	// sees a non-terminal. We save and restore the real os.Stdin.
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+
+	w.Close() // close write end so reads would block (not needed here)
+
+	width, height := getTerminalSize()
+	if width != 80 || height != 24 {
+		t.Errorf("expected fallback 80x24, got %dx%d", width, height)
+	}
 }
 
 // splitHostPort splits "127.0.0.1:12345" into host and port.

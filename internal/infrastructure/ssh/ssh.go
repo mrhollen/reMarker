@@ -155,7 +155,7 @@ func getTerminalSize() (int, int) {
 // isTerminal checks whether the given file descriptor refers to a terminal
 // by attempting a TCGETS ioctl. Returns false on any error.
 func isTerminal(fd int) bool {
-	var mode uint32
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.TCGETS), uintptr(unsafe.Pointer(&mode)))
+	var termios unix.Termios
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.TCGETS), uintptr(unsafe.Pointer(&termios)))
 	return errno == 0
 }
