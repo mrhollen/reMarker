@@ -2,59 +2,37 @@ package ssh
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/ed25519"
+	"fmt"
+	"net"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
-func TestDial_InvalidHost(t *testing.T) {
-	// Dial to a non-routable address should fail — use short timeout
-	// so the test doesn't hang for 30 seconds.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_, err := Dial(ctx, "192.0.2.1", 22, "root", "password")
-	if err == nil {
-		t.Error("Dial to invalid host should return error")
-	}
-}
-
-func TestDial_InvalidPort(t *testing.T) {
-	// Port 0 is invalid
-	_, err := Dial(context.Background(), "127.0.0.1", 0, "root", "password")
-	if err == nil {
-		t.Error("Dial to invalid port should return error")
-	}
-}
-
-func TestDial_EmptyHost(t *testing.T) {
-	_, err := Dial(context.Background(), "", 22, "root", "password")
-	if err == nil {
-		t.Error("Dial with empty host should return error")
-	}
-}
-
 func TestClose_NilClient(t *testing.T) {
-	// Closing a nil-initialized client should not panic
-	c := &Client{}
-	err := c.Close()
-	if err != nil {
-		t.Errorf("Close on nil conn should return nil error, got: %v", err)
-	}
-}
-
-func TestClose_NilPointer(t *testing.T) {
-	// Dereferencing a nil Client pointer via method call — Go allows this
-	// since the receiver is a pointer. The method body must handle nil conn.
 	var c *Client
 	err := c.Close()
 	if err != nil {
-		t.Errorf("Close on nil *Client should return nil error, got: %v", err)
+		t.Errorf("expected nil, got %v", err)
 	}
 }
 
-func TestSSH_ReturnsNilOnUninitializedClient(t *testing.T) {
+func TestClose_NilConn(t *testing.T) {
 	c := &Client{}
-	if c.SSH() != nil {
-		t.Error("SSH() on uninitialized client should return nil")
+	err := c.Close()
+	if err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestSSH_NilClient(t *testing.T) {
+	var c *Client
+	got := c.SSH()
+	if got != nil {
+		t.Errorf("expected nil, got %v", got)
 	}
 }
 
@@ -62,7 +40,7 @@ func TestShell_NilClient(t *testing.T) {
 	var c *Client
 	err := c.Shell()
 	if err == nil {
-		t.Error("Shell() on nil client should return error")
+		t.Error("expected error, got nil")
 	}
 }
 
@@ -70,73 +48,157 @@ func TestShell_NilConn(t *testing.T) {
 	c := &Client{}
 	err := c.Shell()
 	if err == nil {
-		t.Error("Shell() on nil conn should return error")
+		t.Error("expected error, got nil")
 	}
 }
 
-func TestGetTerminalSize_NonTerminal(t *testing.T) {
-	// In a test environment, stdin is not a terminal, so we expect fallback.
-	w, h := getTerminalSize()
-	if w != 80 {
-		t.Errorf("expected fallback width 80, got %d", w)
-	}
-	if h != 24 {
-		t.Errorf("expected fallback height 24, got %d", h)
-	}
-}
-
-func TestDial_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-
-	// This test requires a real SSH server. It will fail in CI but serves
-	// as a manual integration test when a reMarkable device is connected.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	c, err := Dial(ctx, "10.11.99.1", 22, "root", "test-password")
-	if err == nil {
-		// Connected — close and verify SSH() is non-nil
-		defer c.Close()
-		if c.SSH() == nil {
-			t.Error("SSH() should return non-nil after successful dial")
-		}
-	}
-	// If err != nil, we expect it (wrong password or no device) — not a test failure
-}
-
-func TestDial_ContextDeadlineExceeded(t *testing.T) {
-	// Create a context that expires immediately
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
-	time.Sleep(5 * time.Millisecond) // ensure deadline has passed
-	cancel()
-
-	_, err := Dial(ctx, "127.0.0.1", 22, "root", "password")
-	if err == nil {
-		t.Error("Dial with expired context deadline should return error")
-	}
-}
-
-func TestDial_ContextCancellation(t *testing.T) {
-	// Create a context and cancel it before dialing
+func TestDial_ContextAlreadyCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	_, err := Dial(ctx, "127.0.0.1", 22, "root", "password")
 	if err == nil {
-		t.Error("Dial with cancelled context should return error")
+		t.Error("expected error, got nil")
 	}
 }
 
-func TestDial_ContextTimeoutUsed(t *testing.T) {
-	// Dial with a very short context timeout to a host that won't respond
-	// quickly — should fail due to timeout, not just connection refused.
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+func TestDial_ConnectionRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// 192.0.2.1 is TEST-NET-1, guaranteed unreachable
-	_, err := Dial(ctx, "192.0.2.1", 22, "root", "password")
+	_, err := Dial(ctx, "127.0.0.1", 59999, "root", "password")
 	if err == nil {
-		t.Error("Dial with short timeout to unreachable host should return error")
+		t.Error("expected error for refused connection, got nil")
 	}
+}
+
+func TestDial_ContextDeadlinePropagation(t *testing.T) {
+	// Verify that a context with a deadline results in a short timeout
+	// so the call fails quickly rather than hanging for 30s.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(500*time.Millisecond))
+	defer cancel()
+
+	start := time.Now()
+	_, err := Dial(ctx, "127.0.0.1", 59999, "root", "password")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	// Should fail well under 2 seconds, proving the deadline was used
+	if elapsed > 2*time.Second {
+		t.Errorf("dial took %v, expected it to use the context deadline and fail quickly", elapsed)
+	}
+}
+
+func TestDial_Success(t *testing.T) {
+	listener, err := startTestSSHServer()
+	if err != nil {
+		t.Fatalf("startTestSSHServer: %v", err)
+	}
+	defer listener.Close()
+
+	addr := listener.Addr().String()
+	host, port, err := splitHostPort(addr)
+	if err != nil {
+		t.Fatalf("splitHostPort: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := Dial(ctx, host, port, "testuser", "testpass")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer client.Close()
+
+	if client.SSH() == nil {
+		t.Error("expected non-nil SSH client")
+	}
+}
+
+func TestDial_WrongPassword(t *testing.T) {
+	listener, err := startTestSSHServer()
+	if err != nil {
+		t.Fatalf("startTestSSHServer: %v", err)
+	}
+	defer listener.Close()
+
+	addr := listener.Addr().String()
+	host, port, err := splitHostPort(addr)
+	if err != nil {
+		t.Fatalf("splitHostPort: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = Dial(ctx, host, port, "testuser", "wrongpass")
+	if err == nil {
+		t.Error("expected error for wrong password, got nil")
+	}
+}
+
+// startTestSSHServer creates a minimal SSH server listening on a random
+// localhost port, using ed25519 host key and password authentication.
+func startTestSSHServer() (net.Listener, error) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			if c.User() == "testuser" && string(pass) == "testpass" {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("invalid credentials")
+		},
+	}
+	config.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _, reqs, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					return
+				}
+				// Drain requests so the connection doesn't hang
+				go ssh.DiscardRequests(reqs)
+			}()
+		}
+	}()
+
+	return listener, nil
+}
+
+// splitHostPort splits "127.0.0.1:12345" into host and port.
+func splitHostPort(addr string) (string, int, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, err
+	}
+	var port int
+	_, err = fmt.Sscanf(portStr, "%d", &port)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
 }

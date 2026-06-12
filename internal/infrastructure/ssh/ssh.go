@@ -48,7 +48,20 @@ func Dial(ctx context.Context, host string, port int, user, password string) (*C
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         timeout,
+		// Explicitly set host key algorithms. golang.org/x/crypto/ssh
+		// SetDefaults() does NOT populate HostKeyAlgorithms, leaving it
+		// empty which causes handshake failure with Dropbear (reMarkable's
+		// SSH server). We list ed25519 first since that's what Dropbear
+		// advertises, followed by common ECDSA and RSA variants.
+		HostKeyAlgorithms: []string{
+			"ssh-ed25519",
+			"ecdsa-sha2-nistp256",
+			"ecdsa-sha2-nistp384",
+			"ecdsa-sha2-nistp521",
+			"ssh-rsa",
+		},
 	}
+	config.SetDefaults()
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := ssh.Dial("tcp", addr, config)
