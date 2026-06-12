@@ -1,0 +1,25 @@
+services:
+  remarker:
+    image: remarker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: remarker
+    restart: unless-stopped
+    volumes:
+      - ./documents:/home/remarker/documents
+    environment:
+      - REMARKABLE_PASSWORD=${REMARKABLE_PASSWORD}
+      - REMARKABLE_HOST=${REMARKABLE_HOST:-10.11.99.1}
+      - REMARKABLE_PORT=${REMARKABLE_PORT:-22}
+      - REMARKABLE_USER=${REMARKABLE_USER:-root}
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-5m}
+    # For watch mode (default):
+    # command: watch
+    # For one-time sync:
+    # command: sync
+    # For status:
+    # command: status
+    command: watch
+    stdin_open: true
+    tty: true

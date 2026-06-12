@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+docs/
+Docs/
+README.md
+LICENSE
+AGENTS.md
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local env file (use docker-compose env vars instead)
+.env
+
+# Test files (not needed in production image)
+# Keep these - they're small and useful for debugging
