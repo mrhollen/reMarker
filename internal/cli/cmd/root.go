@@ -3,15 +3,20 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	initpkg "github.com/hollen/remarker/internal/application/init"
 	statuspkg "github.com/hollen/remarker/internal/application/status"
 	syncpkg "github.com/hollen/remarker/internal/application/sync"
+	watchpkg "github.com/hollen/remarker/internal/application/watch"
 	"github.com/hollen/remarker/internal/infrastructure/config"
 	"github.com/hollen/remarker/internal/infrastructure/localfs"
 	"github.com/hollen/remarker/internal/infrastructure/manifeststore"
 	"github.com/hollen/remarker/internal/infrastructure/sftp"
 	"github.com/hollen/remarker/internal/infrastructure/ssh"
+	"github.com/hollen/remarker/internal/infrastructure/watcher"
 	"github.com/spf13/cobra"
 )
 
@@ -135,9 +140,46 @@ func newStatusCmd() *cobra.Command {
 func newWatchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "watch",
-		Short: "Watch for file changes and sync automatically",
+		Short: "Watch for changes and sync automatically",
+		Long:  "Monitor the local documents directory for changes and automatically sync with the reMarkable device.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("not yet implemented")
+			cfg := config.Load()
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
+
+			manifestRepo := manifeststore.NewDefault(cfg.SyncDir)
+			localRepo := localfs.New(cfg.SyncDir)
+
+			sshClient, err := ssh.Dial(cfg.Host, cfg.Port, cfg.User, cfg.Password)
+			if err != nil {
+				return fmt.Errorf("connect to device: %w", err)
+			}
+			defer sshClient.Close()
+
+			sftpClient, err := sftp.New(sshClient)
+			if err != nil {
+				return fmt.Errorf("initialize sftp: %w", err)
+			}
+			defer sftpClient.Close()
+
+			w := watcher.New(cfg.SyncDir, 0)
+
+			uc := watchpkg.NewWatchUseCase(sftpClient, localRepo, manifestRepo, w, cfg.SyncInterval)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Handle SIGINT/SIGTERM for graceful shutdown
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigChan
+				cancel()
+			}()
+
+			fmt.Println("Watching for changes... (Ctrl+C to stop)")
+			return uc.Run(ctx)
 		},
 	}
 }
