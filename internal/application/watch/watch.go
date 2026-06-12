@@ -121,6 +121,7 @@ func (uc *WatchUseCase) doSync(ctx context.Context) {
 		uc.deviceRepo,
 		uc.localRepo,
 		uc.manifestRepo,
+		nil, // no progress reporting in watch mode
 	)
 	_, _ = syncUC.Execute(ctx) // Errors are logged inside Execute.
 }
