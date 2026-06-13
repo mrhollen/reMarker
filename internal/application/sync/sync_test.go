@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func (m *mockDeviceRepository) GetFileContent(_ context.Context, path string) (i
 	if m.getContent != nil {
 		return m.getContent(context.Background(), path)
 	}
-	return nil, nil
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 // Compile-time check.
@@ -83,12 +84,13 @@ var _ document.DeviceRepository = (*mockDeviceRepository)(nil)
 
 // mockLocalRepository implements document.LocalRepository for testing.
 type mockLocalRepository struct {
-	files       map[string]document.File
-	getFileErr  error
-	putFileErr  error
-	deleteErr   error
-	listErr     error
-	putFileCall func(ctx context.Context, file document.File) error
+	files              map[string]document.File
+	getFileErr         error
+	putFileErr         error
+	deleteErr          error
+	listErr            error
+	putFileCall        func(ctx context.Context, file document.File) error
+	putFileContentCall func(ctx context.Context, file document.File, content io.Reader) error
 }
 
 func (m *mockLocalRepository) ListFiles(_ context.Context) ([]document.File, error) {
@@ -135,7 +137,10 @@ func (m *mockLocalRepository) DeleteFile(_ context.Context, path string) error {
 	return nil
 }
 
-func (m *mockLocalRepository) PutFileContent(_ context.Context, file document.File, _ io.Reader) error {
+func (m *mockLocalRepository) PutFileContent(ctx context.Context, file document.File, content io.Reader) error {
+	if m.putFileContentCall != nil {
+		return m.putFileContentCall(ctx, file, content)
+	}
 	if m.putFileErr != nil {
 		return m.putFileErr
 	}
@@ -1118,5 +1123,223 @@ func TestSyncResult_HasActions(t *testing.T) {
 				t.Errorf("HasActions() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pullFile content transfer tests
+// ---------------------------------------------------------------------------
+
+func TestPullFile_TransfersContent(t *testing.T) {
+	// pullFile should download file content from device and write to local
+	now := time.Now()
+	ctx := context.Background()
+	filePath := "note.content"
+	fileContent := "this is the actual file content from the device"
+
+	var receivedContent string
+	localFiles := make(map[string]document.File)
+	deviceRepo := &mockDeviceRepository{
+		files: map[string]document.File{
+			filePath: file(filePath, "devicehash", int64(len(fileContent)), now),
+		},
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(fileContent)), nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: localFiles,
+		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
+			data, err := io.ReadAll(r)
+			if err != nil {
+				return err
+			}
+			receivedContent = string(data)
+			localFiles[f.Path] = f
+			return nil
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	// Verify pull action happened
+	found := false
+	for _, a := range result.Actions {
+		if a.Path == filePath && a.ActionType == document.ActionPull {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected pull action for device-only file")
+	}
+
+	// Verify content was actually transferred
+	if receivedContent != fileContent {
+		t.Errorf("content mismatch: got %q, want %q", receivedContent, fileContent)
+	}
+
+	// Verify file metadata stored on local
+	localFile, ok := localRepo.files[filePath]
+	if !ok {
+		t.Fatal("file not stored on local after pull")
+	}
+	if localFile.Hash != "devicehash" {
+		t.Errorf("local file hash = %q, want %q", localFile.Hash, "devicehash")
+	}
+
+	// Verify manifest was updated with correct fields
+	if len(manifestRepo.savedManifest.Entries) != 1 {
+		t.Fatalf("expected 1 manifest entry, got %d", len(manifestRepo.savedManifest.Entries))
+	}
+	entry := manifestRepo.savedManifest.Entries[filePath]
+	if entry.Hash != "devicehash" {
+		t.Errorf("manifest hash = %q, want %q", entry.Hash, "devicehash")
+	}
+	if entry.Size != int64(len(fileContent)) {
+		t.Errorf("manifest size = %d, want %d", entry.Size, int64(len(fileContent)))
+	}
+}
+
+func TestPullFile_DeviceGetContentFails(t *testing.T) {
+	// When device GetFileContent fails, pull should report error and not abort sync
+	now := time.Now()
+	ctx := context.Background()
+	filePath := "note.content"
+	getContentErr := errors.New("SFTP read failed")
+
+	deviceRepo := &mockDeviceRepository{
+		files: map[string]document.File{
+			filePath: file(filePath, "devicehash", 200, now),
+		},
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return nil, getContentErr
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: map[string]document.File{},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected fatal error: %v", err)
+	}
+
+	// Should have a non-fatal error for the file
+	if len(result.Errors) == 0 {
+		t.Fatal("expected error in result.Errors for failed pull, got none")
+	}
+
+	found := false
+	for _, e := range result.Errors {
+		if domainErrors.HasPath(e, filePath) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error for %s, got errors: %v", filePath, result.Errors)
+	}
+}
+
+func TestPullFile_LocalPutContentFails(t *testing.T) {
+	// When local PutFileContent fails, pull should report error
+	now := time.Now()
+	ctx := context.Background()
+	filePath := "note.content"
+	fileContent := "file content"
+	putContentErr := errors.New("disk full")
+
+	deviceRepo := &mockDeviceRepository{
+		files: map[string]document.File{
+			filePath: file(filePath, "devicehash", int64(len(fileContent)), now),
+		},
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(fileContent)), nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: map[string]document.File{},
+		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
+			return putContentErr
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected fatal error: %v", err)
+	}
+
+	if len(result.Errors) == 0 {
+		t.Fatal("expected error in result.Errors for failed local write, got none")
+	}
+
+	found := false
+	for _, e := range result.Errors {
+		if domainErrors.HasPath(e, filePath) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error for %s, got errors: %v", filePath, result.Errors)
+	}
+}
+
+func TestPullFile_UpdatesManifestWithSourceFields(t *testing.T) {
+	// Manifest entry should use action.Source fields (device file info)
+	now := time.Now()
+	ctx := context.Background()
+	filePath := "doc.content"
+	fileContent := "content"
+
+	deviceRepo := &mockDeviceRepository{
+		files: map[string]document.File{
+			filePath: file(filePath, "dev-hash", 7, now),
+		},
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(fileContent)), nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: map[string]document.File{},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	_, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	entry, ok := manifestRepo.savedManifest.Entries[filePath]
+	if !ok {
+		t.Fatal("manifest entry not created for pulled file")
+	}
+	if entry.Hash != "dev-hash" {
+		t.Errorf("manifest hash = %q, want %q", entry.Hash, "dev-hash")
+	}
+	if entry.Size != 7 {
+		t.Errorf("manifest size = %d, want 7", entry.Size)
+	}
+	if !entry.ModTime.Equal(now) {
+		t.Errorf("manifest modTime = %v, want %v", entry.ModTime, now)
 	}
 }

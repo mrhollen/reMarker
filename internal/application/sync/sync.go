@@ -157,7 +157,13 @@ func (uc *SyncUseCase) pushFile(ctx context.Context, action document.SyncAction,
 
 // pullFile transfers a file from device to local and updates the manifest.
 func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction, manifest *document.Manifest) error {
-	if err := uc.localRepo.PutFile(ctx, action.Source); err != nil {
+	content, err := uc.deviceRepo.GetFileContent(ctx, action.Path)
+	if err != nil {
+		return fmt.Errorf("get file content from device: %w", err)
+	}
+	defer content.Close()
+
+	if err := uc.localRepo.PutFileContent(ctx, action.Source, content); err != nil {
 		return fmt.Errorf("pull to local: %w", err)
 	}
 	manifest.Set(action.Path, document.ManifestEntry{
