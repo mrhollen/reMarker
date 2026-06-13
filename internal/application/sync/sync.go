@@ -179,18 +179,32 @@ func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction,
 // resolveConflict handles a file that has been modified on both sides.
 // The newer file wins; the loser is preserved with a .conflict suffix on
 // both sides.
+//
+// Content-aware transfers: action.Source is the local file, action.Dest is
+// the device file. When content originates from device, we must use
+// GetFileContent + PutFileContent to transfer actual bytes. When content
+// originates from local, PutFile reads from the local filesystem.
+//
+// Ordering matters: we must pull device content before the device file
+// gets overwritten by a subsequent push.
 func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.SyncAction, manifest *document.Manifest) error {
 	// Determine winner and loser based on modification time
 	var winner, loser document.File
+	winnerIsLocal := false
+	loserIsLocal := false
+
 	if action.Source.IsNewer(action.Dest) {
 		winner = action.Source
 		loser = action.Dest
+		winnerIsLocal = true
+		loserIsLocal = false
 	} else {
 		winner = action.Dest
 		loser = action.Source
+		winnerIsLocal = false
+		loserIsLocal = true
 	}
 
-	// Create conflict copies on both sides
 	conflictPath := action.Path + ".conflict"
 	conflictFile := document.File{
 		Path:    conflictPath,
@@ -199,19 +213,60 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 		Hash:    loser.Hash,
 	}
 
-	if err := uc.deviceRepo.PutFile(ctx, conflictFile); err != nil {
-		return fmt.Errorf("create conflict copy on device: %w", err)
-	}
-	if err := uc.localRepo.PutFile(ctx, conflictFile); err != nil {
-		return fmt.Errorf("create conflict copy on local: %w", err)
+	// --- Create conflict copy of loser on both sides ---
+	if loserIsLocal {
+		// Loser content is in local filesystem — PutFile reads it correctly
+		if err := uc.deviceRepo.PutFile(ctx, conflictFile); err != nil {
+			return fmt.Errorf("create conflict copy on device: %w", err)
+		}
+		if err := uc.localRepo.PutFile(ctx, conflictFile); err != nil {
+			return fmt.Errorf("create conflict copy on local: %w", err)
+		}
+	} else {
+		// Loser content is on device — must pull via GetFileContent
+		loserContent, err := uc.deviceRepo.GetFileContent(ctx, action.Path)
+		if err != nil {
+			return fmt.Errorf("get loser content from device: %w", err)
+		}
+
+		if err := uc.localRepo.PutFileContent(ctx, conflictFile, loserContent); err != nil {
+			loserContent.Close()
+			return fmt.Errorf("create conflict copy on local: %w", err)
+		}
+		loserContent.Close()
+
+		// Now local has the conflict content — push to device
+		if err := uc.deviceRepo.PutFile(ctx, conflictFile); err != nil {
+			return fmt.Errorf("create conflict copy on device: %w", err)
+		}
 	}
 
-	// Push winner to both sides
-	if err := uc.deviceRepo.PutFile(ctx, winner); err != nil {
-		return fmt.Errorf("push winner to device: %w", err)
-	}
-	if err := uc.localRepo.PutFile(ctx, winner); err != nil {
-		return fmt.Errorf("push winner to local: %w", err)
+	// --- Push winner to both sides ---
+	if winnerIsLocal {
+		// Winner content is in local filesystem — PutFile reads it correctly
+		if err := uc.deviceRepo.PutFile(ctx, winner); err != nil {
+			return fmt.Errorf("push winner to device: %w", err)
+		}
+		if err := uc.localRepo.PutFile(ctx, winner); err != nil {
+			return fmt.Errorf("push winner to local: %w", err)
+		}
+	} else {
+		// Winner content is on device — must pull via GetFileContent
+		winnerContent, err := uc.deviceRepo.GetFileContent(ctx, action.Path)
+		if err != nil {
+			return fmt.Errorf("get winner content from device: %w", err)
+		}
+
+		if err := uc.localRepo.PutFileContent(ctx, winner, winnerContent); err != nil {
+			winnerContent.Close()
+			return fmt.Errorf("pull winner to local: %w", err)
+		}
+		winnerContent.Close()
+
+		// Now local has the winner content — push to device
+		if err := uc.deviceRepo.PutFile(ctx, winner); err != nil {
+			return fmt.Errorf("push winner to device: %w", err)
+		}
 	}
 
 	// Update manifest with winner

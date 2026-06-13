@@ -1343,3 +1343,400 @@ func TestPullFile_UpdatesManifestWithSourceFields(t *testing.T) {
 		t.Errorf("manifest modTime = %v, want %v", entry.ModTime, now)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// resolveConflict content transfer tests
+// ---------------------------------------------------------------------------
+
+func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
+	// Both sides modified, local is newer. Loser is device.
+	// Expected: conflict copy of device file pulled to local,
+	// winner (local) pushed to device.
+	now := time.Now()
+	ctx := context.Background()
+	manifestHash := "originalhash"
+	manifestTime := now.Add(-2 * time.Hour)
+
+	localContent := "local winner content"
+	deviceContent := "device loser content"
+
+	localFile := file("doc.metadata", "localhash", int64(len(localContent)), now)
+	deviceFile := file("doc.metadata", "devicehash", int64(len(deviceContent)), now.Add(-time.Hour))
+
+	var conflictContentReceived string
+	var winnerPushedToDevice bool
+
+	deviceFiles := map[string]document.File{
+		"doc.metadata": deviceFile,
+	}
+	localFiles := map[string]document.File{
+		"doc.metadata": localFile,
+	}
+
+	deviceRepo := &mockDeviceRepository{
+		files: deviceFiles,
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(deviceContent)), nil
+		},
+		putFileCall: func(_ context.Context, f document.File) error {
+			if f.Path == "doc.metadata.conflict" {
+				// Conflict copy pushed to device
+			} else if f.Path == "doc.metadata" {
+				winnerPushedToDevice = true
+			}
+			deviceFiles[f.Path] = f
+			return nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: localFiles,
+		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
+			if f.Path == "doc.metadata.conflict" {
+				data, err := io.ReadAll(r)
+				if err != nil {
+					return err
+				}
+				conflictContentReceived = string(data)
+			}
+			localFiles[f.Path] = f
+			return nil
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{
+			"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
+		}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	if !result.HasConflicts() {
+		t.Fatal("expected conflict, got none")
+	}
+
+	// Winner (local) should be pushed to device
+	if !winnerPushedToDevice {
+		t.Error("winner (local file) should be pushed to device")
+	}
+
+	// Conflict copy of device loser should be pulled to local with content
+	if conflictContentReceived != deviceContent {
+		t.Errorf("conflict content = %q, want %q", conflictContentReceived, deviceContent)
+	}
+
+	// Conflict copy should exist on device
+	if _, ok := deviceRepo.files["doc.metadata.conflict"]; !ok {
+		t.Error("conflict copy should exist on device")
+	}
+
+	// Manifest should have winner's hash
+	entry, ok := manifestRepo.savedManifest.Entries["doc.metadata"]
+	if !ok {
+		t.Fatal("manifest entry not created for resolved conflict")
+	}
+	if entry.Hash != "localhash" {
+		t.Errorf("manifest hash = %q, want %q", entry.Hash, "localhash")
+	}
+}
+
+func TestResolveConflict_DeviceWinner_LocalLoser(t *testing.T) {
+	// Both sides modified, device is newer. Loser is local.
+	// Expected: conflict copy of local file pushed to device,
+	// winner (device) pulled to local with content, then pushed to device.
+	now := time.Now()
+	ctx := context.Background()
+	manifestHash := "originalhash"
+	manifestTime := now.Add(-2 * time.Hour)
+
+	localContent := "local loser content"
+	deviceContent := "device winner content"
+
+	localFile := file("doc.metadata", "localhash", int64(len(localContent)), now.Add(-time.Hour))
+	deviceFile := file("doc.metadata", "devicehash", int64(len(deviceContent)), now)
+
+	var winnerContentReceived string
+	var conflictPushedToDevice bool
+
+	deviceFiles := map[string]document.File{
+		"doc.metadata": deviceFile,
+	}
+	localFiles := map[string]document.File{
+		"doc.metadata": localFile,
+	}
+
+	deviceRepo := &mockDeviceRepository{
+		files: deviceFiles,
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(deviceContent)), nil
+		},
+		putFileCall: func(_ context.Context, f document.File) error {
+			if f.Path == "doc.metadata.conflict" {
+				conflictPushedToDevice = true
+			} else if f.Path == "doc.metadata" {
+				// Winner pushed to device
+			}
+			deviceFiles[f.Path] = f
+			return nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: localFiles,
+		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
+			if f.Path == "doc.metadata" {
+				data, err := io.ReadAll(r)
+				if err != nil {
+					return err
+				}
+				winnerContentReceived = string(data)
+			}
+			localFiles[f.Path] = f
+			return nil
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{
+			"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
+		}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	if !result.HasConflicts() {
+		t.Fatal("expected conflict, got none")
+	}
+
+	// Winner (device) content should be pulled to local
+	if winnerContentReceived != deviceContent {
+		t.Errorf("winner content = %q, want %q", winnerContentReceived, deviceContent)
+	}
+
+	// Conflict copy of local loser should be pushed to device
+	if !conflictPushedToDevice {
+		t.Error("conflict copy (local loser) should be pushed to device")
+	}
+
+	// Conflict copy should exist on local
+	if _, ok := localRepo.files["doc.metadata.conflict"]; !ok {
+		t.Error("conflict copy should exist on local")
+	}
+
+	// Manifest should have winner's hash (device)
+	entry, ok := manifestRepo.savedManifest.Entries["doc.metadata"]
+	if !ok {
+		t.Fatal("manifest entry not created for resolved conflict")
+	}
+	if entry.Hash != "devicehash" {
+		t.Errorf("manifest hash = %q, want %q", entry.Hash, "devicehash")
+	}
+}
+
+func TestResolveConflict_DeviceWinner_DeviceLoser(t *testing.T) {
+	// Both sides modified, local is newer. Loser is device.
+	// Expected: conflict copy of device loser pulled to local with content,
+	// winner (local) pushed to device via PutFile (reads local content).
+	now := time.Now()
+	ctx := context.Background()
+	manifestHash := "originalhash"
+	manifestTime := now.Add(-2 * time.Hour)
+
+	localContent := "local winner content"
+	deviceContent := "device loser content"
+
+	// Source=local (newer), Dest=device (older). Local wins, device loses.
+	localFile := file("doc.metadata", "localhash", int64(len(localContent)), now)
+	deviceFile := file("doc.metadata", "devicehash", int64(len(deviceContent)), now.Add(-time.Hour))
+
+	var conflictContentReceived string
+	getContentCalls := 0
+
+	deviceFiles := map[string]document.File{
+		"doc.metadata": deviceFile,
+	}
+	localFiles := map[string]document.File{
+		"doc.metadata": localFile,
+	}
+
+	deviceRepo := &mockDeviceRepository{
+		files: deviceFiles,
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			getContentCalls++
+			return io.NopCloser(strings.NewReader(deviceContent)), nil
+		},
+		putFileCall: func(_ context.Context, f document.File) error {
+			deviceFiles[f.Path] = f
+			return nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: localFiles,
+		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
+			data, err := io.ReadAll(r)
+			if err != nil {
+				return err
+			}
+			if f.Path == "doc.metadata.conflict" {
+				conflictContentReceived = string(data)
+			}
+			localFiles[f.Path] = f
+			return nil
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{
+			"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
+		}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+
+	if !result.HasConflicts() {
+		t.Fatal("expected conflict, got none")
+	}
+
+	// Winner (local) content should be pushed to device via PutFile (reads from local)
+	// No PutFileContent call for winner since it's local-originated
+
+	// Conflict copy content should be device loser content
+	if conflictContentReceived != deviceContent {
+		t.Errorf("conflict content = %q, want %q", conflictContentReceived, deviceContent)
+	}
+
+	// GetFileContent should be called (for device loser)
+	if getContentCalls == 0 {
+		t.Error("expected GetFileContent to be called for device loser")
+	}
+
+	// Conflict copy should exist on device
+	if _, ok := deviceRepo.files["doc.metadata.conflict"]; !ok {
+		t.Error("conflict copy should exist on device")
+	}
+
+	// Manifest should have winner's hash (local)
+	entry, ok := manifestRepo.savedManifest.Entries["doc.metadata"]
+	if !ok {
+		t.Fatal("manifest entry not created for resolved conflict")
+	}
+	if entry.Hash != "localhash" {
+		t.Errorf("manifest hash = %q, want %q", entry.Hash, "localhash")
+	}
+}
+
+func TestResolveConflict_LocalWinner_DeviceLoser_DeviceGetContentFails(t *testing.T) {
+	// Device loser content pull fails => error reported
+	now := time.Now()
+	ctx := context.Background()
+	manifestHash := "originalhash"
+	manifestTime := now.Add(-2 * time.Hour)
+	getContentErr := errors.New("SFTP read failed")
+
+	localFile := file("doc.metadata", "localhash", 100, now)
+	deviceFile := file("doc.metadata", "devicehash", 100, now.Add(-time.Hour))
+
+	deviceRepo := &mockDeviceRepository{
+		files: map[string]document.File{
+			"doc.metadata": deviceFile,
+		},
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return nil, getContentErr
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: map[string]document.File{
+			"doc.metadata": localFile,
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{
+			"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
+		}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected fatal error: %v", err)
+	}
+
+	// Should have a non-fatal error
+	if len(result.Errors) == 0 {
+		t.Fatal("expected error in result.Errors for failed conflict resolution, got none")
+	}
+
+	found := false
+	for _, e := range result.Errors {
+		if domainErrors.HasPath(e, "doc.metadata") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error for doc.metadata, got errors: %v", result.Errors)
+	}
+}
+
+func TestResolveConflict_DeviceWinner_LocalPutContentFails(t *testing.T) {
+	// Pulling device winner to local fails => error reported
+	now := time.Now()
+	ctx := context.Background()
+	manifestHash := "originalhash"
+	manifestTime := now.Add(-2 * time.Hour)
+	putContentErr := errors.New("disk full")
+
+	localFile := file("doc.metadata", "localhash", 100, now.Add(-time.Hour))
+	deviceFile := file("doc.metadata", "devicehash", 100, now)
+
+	deviceRepo := &mockDeviceRepository{
+		files: map[string]document.File{
+			"doc.metadata": deviceFile,
+		},
+		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("device content")), nil
+		},
+	}
+	localRepo := &mockLocalRepository{
+		files: map[string]document.File{
+			"doc.metadata": localFile,
+		},
+		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
+			return putContentErr
+		},
+	}
+	manifestRepo := &mockManifestRepository{
+		manifest: manifest(1, map[string]document.ManifestEntry{
+			"doc.metadata": entry("doc.metadata", manifestHash, 100, manifestTime, manifestTime),
+		}),
+	}
+
+	uc := NewSyncUseCase(deviceRepo, localRepo, manifestRepo, nil)
+	result, err := uc.Execute(ctx)
+	if err != nil {
+		t.Fatalf("Execute() unexpected fatal error: %v", err)
+	}
+
+	if len(result.Errors) == 0 {
+		t.Fatal("expected error in result.Errors for failed local write, got none")
+	}
+
+	found := false
+	for _, e := range result.Errors {
+		if domainErrors.HasPath(e, "doc.metadata") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error for doc.metadata, got errors: %v", result.Errors)
+	}
+}
