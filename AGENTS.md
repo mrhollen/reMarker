@@ -64,3 +64,33 @@ internal/
 - **No prefixes** like `feat:`, `fix:`, `bug:`, `refactor:`, etc.
 - The **subject line** should state what the commit accomplishes (e.g. "add document sync use case", not "feat: add document sync").
 - Always use the **commit description / body** for detailed information about the changes.
+
+## Project State
+
+### What exists
+- All 5 CLI commands implemented: `init`, `sync`, `status`, `watch`, `ssh`
+- Full Clean Architecture: domain → application → infrastructure → cli
+- SSH to device via Dropbear (password auth, PTY shell, `xterm` terminal type)
+- SFTP client with atomic writes (temp + rename) to xochitl directory
+- Local filesystem client with SHA256 hashing, skips `.git/` and `.remarker/`
+- JSON manifest store at `.remarker/manifest.json` for state tracking
+- Watch mode with fsnotify + periodic timer
+- Config from environment variables only, no config file
+- Docker support with multi-stage build + docker-compose
+
+### Current sync behavior
+- **Direction**: local → device only (push). Does NOT pull device files to local.
+- **Deletions**: ignored on both sides. Files removed from manifest but not deleted.
+- **Scope**: `./documents/` locally ↔ `/home/root/.local/share/remarkable/xochitl` on device
+- **Conflicts**: creates `.conflict` copy, reports in sync summary
+
+### Known gaps (not yet implemented)
+- **Pull sync**: device → local direction. First sync from empty local does nothing.
+- **Delete propagation**: deletions are silently ignored, not configurable.
+- **Progress for status/watch**: only sync command has progress callbacks.
+
+### SSH gotchas
+- Device runs Dropbear SSH (not OpenSSH) — needs explicit `HostKeyAlgorithms` in config
+- `isTerminal()` must use `unix.Termios` (44 bytes) for ioctl, NOT `uint32` (stack corruption)
+- `Shell()` must call `session.Wait()` or returns immediately
+- Terminal type must be `xterm`, not `xterm-256color` (Dropbear compatibility)
