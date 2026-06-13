@@ -1,12 +1,125 @@
 // Package document defines the core domain entities for reMarkable document
 // synchronization. This is the innermost layer and depends only on the Go
-// standard library.
+// standard library and google/uuid.
 package document
 
 import (
-	"github.com/hollen/remarker/internal/domain/errors"
+	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/hollen/remarker/internal/domain/errors"
 )
+
+// ============================================================================
+// DocumentType
+// ============================================================================
+
+// DocumentType represents the type of content a document holds on the device.
+type DocumentType string
+
+const (
+	// DocumentTypePDF represents a PDF document.
+	DocumentTypePDF DocumentType = "pdf"
+	// DocumentTypeNotebook represents a reMarkable notebook (handwritten notes).
+	DocumentTypeNotebook DocumentType = "notebook"
+	// DocumentTypeEPub represents an EPUB ebook.
+	DocumentTypeEPub DocumentType = "epub"
+	// DocumentTypeFolder represents a folder on the device.
+	DocumentTypeFolder DocumentType = "folder"
+)
+
+// ============================================================================
+// Document
+// ============================================================================
+
+// Document represents a syncable document on the reMarkable device.
+// It carries the business rules for comparing local and device state,
+// deriving device paths, and determining sync status.
+type Document struct {
+	ID          uuid.UUID    // Device UUID - unique identifier
+	LocalPath   string       // Relative path from sync root, e.g. "documents/Annual Report.pdf"
+	Type        DocumentType // pdf, notebook, epub
+	VisibleName string       // Human-readable name on device (derived from LocalPath filename)
+	LocalHash   string       // SHA256 of local content file
+	DeviceHash  string       // SHA256 of device content file
+	Size        int64        // File size in bytes
+	ModTime     time.Time    // Last modification time
+	SyncedAt    time.Time    // Last successful sync time
+}
+
+// NewDocument creates a new Document with a generated UUID and derived VisibleName.
+func NewDocument(localPath string, docType DocumentType) Document {
+	return Document{
+		ID:          uuid.New(),
+		LocalPath:   localPath,
+		Type:        docType,
+		VisibleName: filepath.Base(localPath),
+	}
+}
+
+// IsSynced returns true if the local and device content hashes match,
+// indicating the document is in sync.
+func (d Document) IsSynced() bool {
+	return d.LocalHash == d.DeviceHash
+}
+
+// IsNewer returns true if this document's modification time is strictly after
+// the other document's modification time.
+func (d Document) IsNewer(other Document) bool {
+	return d.ModTime.After(other.ModTime)
+}
+
+// ToDevicePath returns the device-side filename in the form "<uuid>.<ext>",
+// e.g. "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d.pdf".
+func (d Document) ToDevicePath() string {
+	return d.ID.String() + "." + string(d.Type)
+}
+
+// ============================================================================
+// Folder
+// ============================================================================
+
+// Folder represents a folder on the reMarkable device.
+type Folder struct {
+	ID          uuid.UUID // Device UUID
+	LocalPath   string    // Relative path, e.g. "documents/Projects/"
+	VisibleName string    // Folder name visible on device
+	ParentID    uuid.UUID // Parent folder UUID, zero UUID if root
+}
+
+// NewFolder creates a new Folder with a generated UUID.
+func NewFolder(localPath, visibleName string, parentID uuid.UUID) Folder {
+	return Folder{
+		ID:          uuid.New(),
+		LocalPath:   localPath,
+		VisibleName: visibleName,
+		ParentID:    parentID,
+	}
+}
+
+// IsRoot returns true if the folder has no parent (zero UUID).
+func (f Folder) IsRoot() bool {
+	return f.ParentID == uuid.Nil
+}
+
+// ============================================================================
+// SidecarMetadata
+// ============================================================================
+
+// SidecarMetadata represents the device metadata files associated with a
+// document. The reMarkable device stores document metadata in companion
+// files alongside the content file.
+type SidecarMetadata struct {
+	MetadataFile string // Content of .metadata file (JSON)
+	ContentFile  string // Content of .content file (JSON)
+	PageDataFile string // Content of .pagedata file (if any)
+}
+
+// ============================================================================
+// Legacy types (preserved for backward compatibility)
+// ============================================================================
 
 // File represents any file in the sync scope.
 // It carries the metadata needed to compare, transfer, and track files
@@ -115,3 +228,6 @@ func (s *SyncResult) HasConflicts() bool {
 func (s *SyncResult) HasActions() bool {
 	return len(s.Actions) > 0
 }
+
+// Ensure required imports are used
+var _ = strings.Contains
