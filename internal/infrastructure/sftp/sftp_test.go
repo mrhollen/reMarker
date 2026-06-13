@@ -364,4 +364,22 @@ func TestSFTPClient_MethodsExist(t *testing.T) {
 	if err == nil {
 		t.Error("DeleteFile without connection should return error")
 	}
+
+	_, err = c.GetFileContent(ctx, "test.metadata")
+	if err == nil {
+		t.Error("GetFileContent without connection should return error")
+	}
+}
+
+// TestGetFileContent_NilSFTP verifies GetFileContent returns an error
+// when the underlying SFTP client is not initialized.
+func TestGetFileContent_NilSFTP(t *testing.T) {
+	c := &Client{} // sftp field is nil
+	_, err := c.GetFileContent(context.Background(), "test.metadata")
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "sftp: client not initialized") {
+		t.Errorf("error = %q, want substring %q", err.Error(), "sftp: client not initialized")
+	}
 }

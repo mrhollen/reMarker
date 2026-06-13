@@ -6,6 +6,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -77,6 +78,10 @@ func (m *mockDeviceRepo) DeleteFile(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockDeviceRepo) GetFileContent(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, nil
+}
+
 var _ document.DeviceRepository = (*mockDeviceRepo)(nil)
 
 // mockLocalRepo implements document.LocalRepository for testing.
@@ -98,6 +103,10 @@ func (m *mockLocalRepo) PutFile(_ context.Context, _ document.File) error {
 }
 
 func (m *mockLocalRepo) DeleteFile(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockLocalRepo) PutFileContent(_ context.Context, _ document.File, _ io.Reader) error {
 	return nil
 }
 

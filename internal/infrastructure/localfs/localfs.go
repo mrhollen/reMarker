@@ -179,6 +179,65 @@ func (c *Client) PutFile(ctx context.Context, file document.File) error {
 	return nil
 }
 
+// PutFileContent writes file content from an io.Reader to the local filesystem
+// using an atomic write pattern (temp file + rename). Parent directories are
+// created as needed. The modification time is set to the value provided in the
+// File struct. Use this method when you need to transfer actual file content
+// (e.g., during pull sync) rather than creating an empty placeholder.
+func (c *Client) PutFileContent(ctx context.Context, file document.File, content io.Reader) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("localfs put content: %w", err)
+	}
+
+	fullPath := filepath.Join(c.baseDir, file.Path)
+
+	// Ensure parent directory exists
+	parentDir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("localfs mkdir %s: %w", parentDir, err)
+	}
+
+	// Create temp file in the same directory for atomic rename
+	tmpFile, err := os.CreateTemp(parentDir, ".remarker-tmp-*")
+	if err != nil {
+		return fmt.Errorf("localfs create temp %s: %w", parentDir, err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// Clean up temp file on failure
+	success := false
+	defer func() {
+		if !success {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	// Write content to temp file
+	_, err = io.Copy(tmpFile, content)
+	if err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("localfs write %s: %w", file.Path, err)
+	}
+
+	// Close temp file before rename
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("localfs close temp %s: %w", tmpPath, err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		return fmt.Errorf("localfs rename %s: %w", file.Path, err)
+	}
+	success = true
+
+	// Set the modification time
+	if err := os.Chtimes(fullPath, file.ModTime, file.ModTime); err != nil {
+		return fmt.Errorf("localfs chtimes %s: %w", file.Path, err)
+	}
+
+	return nil
+}
+
 // DeleteFile removes a file from the local filesystem. The path is relative
 // to the base directory.
 func (c *Client) DeleteFile(ctx context.Context, path string) error {

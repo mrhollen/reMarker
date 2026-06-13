@@ -236,6 +236,23 @@ func (c *Client) DeleteFile(ctx context.Context, path string) error {
 	return nil
 }
 
+// GetFileContent reads the raw content of a file from the device.
+// Returns an io.ReadCloser that the caller MUST close.
+func (c *Client) GetFileContent(ctx context.Context, path string) (io.ReadCloser, error) {
+	if c.sftp == nil {
+		return nil, fmt.Errorf("sftp: client not initialized")
+	}
+
+	fullPath := filepath.Join(c.baseDir, path)
+
+	f, err := c.sftp.Open(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("sftp open %s: %w", path, err)
+	}
+
+	return f, nil
+}
+
 // computeHash reads from the reader and returns the SHA256 hex digest.
 // It uses a buffered reader to avoid loading the entire file into memory.
 func computeHash(r io.Reader) string {

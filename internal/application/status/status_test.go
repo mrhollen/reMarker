@@ -5,6 +5,7 @@ package status
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,10 @@ func (m *mockDeviceRepository) DeleteFile(_ context.Context, path string) error 
 	return nil
 }
 
+func (m *mockDeviceRepository) GetFileContent(_ context.Context, path string) (io.ReadCloser, error) {
+	return nil, nil
+}
+
 // Compile-time check.
 var _ document.DeviceRepository = (*mockDeviceRepository)(nil)
 
@@ -125,6 +130,17 @@ func (m *mockLocalRepository) DeleteFile(_ context.Context, path string) error {
 		return m.deleteErr
 	}
 	delete(m.files, path)
+	return nil
+}
+
+func (m *mockLocalRepository) PutFileContent(_ context.Context, file document.File, _ io.Reader) error {
+	if m.putFileErr != nil {
+		return m.putFileErr
+	}
+	if m.files == nil {
+		m.files = make(map[string]document.File)
+	}
+	m.files[file.Path] = file
 	return nil
 }
 
