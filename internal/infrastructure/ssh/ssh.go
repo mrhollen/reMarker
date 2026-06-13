@@ -6,6 +6,7 @@ package ssh
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -113,7 +114,9 @@ func (c *Client) Shell() error {
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}
-	if err := session.RequestPty("xterm-256color", width, height, modes); err != nil {
+	// Use "xterm" instead of "xterm-256color" for broader compatibility
+	// with minimal SSH servers like Dropbear on embedded devices.
+	if err := session.RequestPty("xterm", width, height, modes); err != nil {
 		return fmt.Errorf("shell: request pty: %w", err)
 	}
 
@@ -130,11 +133,52 @@ func (c *Client) Shell() error {
 	}()
 	defer signal.Stop(sigChan)
 
-	session.Stdin = os.Stdin
-	session.Stdout = os.Stdout
-	session.Stderr = os.Stderr
+	// Handle SIGINT/SIGTERM for graceful shutdown
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-shutdown
+		session.Signal(ssh.SIGINT)
+	}()
+	defer signal.Stop(shutdown)
 
-	return session.Shell()
+	// Set up pipes for stdin/stdout/stderr
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("shell: stdin pipe: %w", err)
+	}
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("shell: stdout pipe: %w", err)
+	}
+	stderrPipe, err := session.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("shell: stderr pipe: %w", err)
+	}
+
+	// Start the shell
+	if err := session.Shell(); err != nil {
+		return fmt.Errorf("shell: start: %w", err)
+	}
+
+	// Pipe local stdin to remote session
+	go func() {
+		_, _ = io.Copy(stdinPipe, os.Stdin)
+		stdinPipe.Close()
+	}()
+
+	// Pipe remote stdout/stderr to local terminal
+	go func() {
+		_, _ = io.Copy(os.Stdout, stdoutPipe)
+	}()
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	// Wait for the remote shell to exit. This is essential: without it,
+	// the function returns immediately and the deferred session.Close()
+	// kills the remote process.
+	return session.Wait()
 }
 
 // getTerminalSize returns the current terminal dimensions. If the standard
