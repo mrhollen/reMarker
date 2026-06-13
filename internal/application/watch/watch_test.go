@@ -6,6 +6,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -75,6 +76,10 @@ func (m *mockDeviceRepo) PutFile(_ context.Context, _ document.File) error {
 
 func (m *mockDeviceRepo) DeleteFile(_ context.Context, _ string) error {
 	return nil
+}
+
+func (m *mockDeviceRepo) GetFileContent(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, nil
 }
 
 var _ document.DeviceRepository = (*mockDeviceRepo)(nil)

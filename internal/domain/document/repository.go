@@ -1,6 +1,9 @@
 package document
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // DeviceRepository represents operations on the reMarkable device.
 // Implementations typically use SSH/SFTP to communicate with the device.
@@ -18,6 +21,10 @@ type DeviceRepository interface {
 
 	// DeleteFile removes a file from the device.
 	DeleteFile(ctx context.Context, path string) error
+
+	// GetFileContent reads the raw content of a file from the device.
+	// Returns an io.ReadCloser that the caller MUST close.
+	GetFileContent(ctx context.Context, path string) (io.ReadCloser, error)
 }
 
 // LocalRepository represents operations on the local filesystem.

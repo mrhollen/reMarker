@@ -5,6 +5,7 @@ package status
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,10 @@ func (m *mockDeviceRepository) DeleteFile(_ context.Context, path string) error 
 	}
 	delete(m.files, path)
 	return nil
+}
+
+func (m *mockDeviceRepository) GetFileContent(_ context.Context, path string) (io.ReadCloser, error) {
+	return nil, nil
 }
 
 // Compile-time check.

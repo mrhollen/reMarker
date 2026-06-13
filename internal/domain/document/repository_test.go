@@ -2,6 +2,7 @@ package document
 
 import (
 	"context"
+	"io"
 )
 
 // Compile-time interface checks ensure implementations in infrastructure
@@ -32,6 +33,10 @@ func (d *deviceRepositoryImpl) PutFile(ctx context.Context, file File) error {
 
 func (d *deviceRepositoryImpl) DeleteFile(ctx context.Context, path string) error {
 	return nil
+}
+
+func (d *deviceRepositoryImpl) GetFileContent(ctx context.Context, path string) (io.ReadCloser, error) {
+	return nil, nil
 }
 
 // localRepositoryImpl is a dummy type used solely for compile-time

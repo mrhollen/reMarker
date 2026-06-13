@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -22,6 +23,8 @@ type mockDeviceRepository struct {
 	deleteErr   error
 	listErr     error
 	putFileCall func(ctx context.Context, file document.File) error
+	// getContent returns the raw content of a file.
+	getContent func(ctx context.Context, path string) (io.ReadCloser, error)
 }
 
 func (m *mockDeviceRepository) ListFiles(_ context.Context) ([]document.File, error) {
@@ -66,6 +69,13 @@ func (m *mockDeviceRepository) DeleteFile(_ context.Context, path string) error 
 	}
 	delete(m.files, path)
 	return nil
+}
+
+func (m *mockDeviceRepository) GetFileContent(_ context.Context, path string) (io.ReadCloser, error) {
+	if m.getContent != nil {
+		return m.getContent(context.Background(), path)
+	}
+	return nil, nil
 }
 
 // Compile-time check.
