@@ -33,3 +33,6 @@ go.work.sum
 
 # Documentation
 docs/
+
+# Documents folder for user data
+documents/
