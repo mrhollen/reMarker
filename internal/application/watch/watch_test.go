@@ -106,6 +106,10 @@ func (m *mockLocalRepo) DeleteFile(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockLocalRepo) PutFileContent(_ context.Context, _ document.File, _ io.Reader) error {
+	return nil
+}
+
 var _ document.LocalRepository = (*mockLocalRepo)(nil)
 
 // mockManifestRepo implements document.ManifestRepository for testing.

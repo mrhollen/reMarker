@@ -41,6 +41,13 @@ type LocalRepository interface {
 
 	// DeleteFile removes a file from the local filesystem.
 	DeleteFile(ctx context.Context, path string) error
+
+	// PutFileContent writes file content from an io.Reader to the local filesystem
+	// using an atomic write pattern (temp file + rename). Parent directories are
+	// created as needed. The modification time is set to the value provided in the
+	// File struct. Use this method instead of PutFile when you need to transfer
+	// actual file content (e.g., during pull sync).
+	PutFileContent(ctx context.Context, file File, content io.Reader) error
 }
 
 // ManifestRepository represents operations on the sync manifest.

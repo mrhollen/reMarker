@@ -60,6 +60,10 @@ func (l *localRepositoryImpl) DeleteFile(ctx context.Context, path string) error
 	return nil
 }
 
+func (l *localRepositoryImpl) PutFileContent(ctx context.Context, file File, content io.Reader) error {
+	return nil
+}
+
 // manifestRepositoryImpl is a dummy type used solely for compile-time
 // verification that ManifestRepository is a valid interface with the
 // expected method signatures.

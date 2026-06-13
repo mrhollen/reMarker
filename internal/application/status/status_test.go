@@ -133,6 +133,17 @@ func (m *mockLocalRepository) DeleteFile(_ context.Context, path string) error {
 	return nil
 }
 
+func (m *mockLocalRepository) PutFileContent(_ context.Context, file document.File, _ io.Reader) error {
+	if m.putFileErr != nil {
+		return m.putFileErr
+	}
+	if m.files == nil {
+		m.files = make(map[string]document.File)
+	}
+	m.files[file.Path] = file
+	return nil
+}
+
 // Compile-time check.
 var _ document.LocalRepository = (*mockLocalRepository)(nil)
 
