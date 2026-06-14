@@ -12,6 +12,7 @@ var (
 	_ DeviceRepository    = (*deviceRepositoryImpl)(nil)
 	_ LocalRepository     = (*localRepositoryImpl)(nil)
 	_ ManifestRepository  = (*manifestRepositoryImpl)(nil)
+	_ SidecarRepository   = (*sidecarRepositoryImpl)(nil)
 )
 
 // deviceRepositoryImpl is a dummy type used solely for compile-time
@@ -78,5 +79,26 @@ func (m *manifestRepositoryImpl) Save(ctx context.Context, manifest *Manifest) e
 }
 
 func (m *manifestRepositoryImpl) Exists(ctx context.Context) (bool, error) {
+	return false, nil
+}
+
+// sidecarRepositoryImpl is a dummy type used solely for compile-time
+// verification that SidecarRepository is a valid interface with the
+// expected method signatures.
+type sidecarRepositoryImpl struct{}
+
+func (s *sidecarRepositoryImpl) SaveMetadata(ctx context.Context, documentUUID string, meta Metadata, content Content) error {
+	return nil
+}
+
+func (s *sidecarRepositoryImpl) GetMetadata(ctx context.Context, documentUUID string) (Metadata, Content, error) {
+	return Metadata{}, Content{}, nil
+}
+
+func (s *sidecarRepositoryImpl) DeleteMetadata(ctx context.Context, documentUUID string) error {
+	return nil
+}
+
+func (s *sidecarRepositoryImpl) Exists(ctx context.Context, documentUUID string) (bool, error) {
 	return false, nil
 }

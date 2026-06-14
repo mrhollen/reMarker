@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"io"
+	"time"
 )
 
 // DeviceRepository represents operations on the reMarkable device.
@@ -61,4 +62,50 @@ type ManifestRepository interface {
 
 	// Exists returns true if the manifest file exists.
 	Exists(ctx context.Context) (bool, error)
+}
+
+// Metadata represents the parsed contents of a reMarkable .metadata sidecar
+// file. It captures document identification, naming, and organizational state.
+type Metadata struct {
+	DeviceID         string    `json:"DeviceID"`
+	VisibleName      string    `json:"VisibleName"`
+	FileFormat       string    `json:"FileFormat"`
+	ParentFolderUUID string    `json:"ParentFolderUUID"`
+	LastModified     time.Time `json:"LastModified"`
+	IsDeleted        bool      `json:"IsDeleted"`
+}
+
+// PageInfo describes a single page within a reMarkable document.
+type PageInfo struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// Content represents the parsed contents of a reMarkable .content sidecar
+// file. It describes the document's page layout and file type.
+type Content struct {
+	Pages    []PageInfo `json:"pages"`
+	FileType string     `json:"fileType"`
+}
+
+// SidecarRepository represents file-system operations for persisting and
+// retrieving reMarkable sidecar metadata files (.metadata, .content, .pagedata)
+// per document, organized under a device-scoped directory.
+type SidecarRepository interface {
+	// SaveMetadata writes the .metadata and .content files for a document.
+	// Creates the device subdirectory if it does not exist. Uses atomic
+	// writes (temp file + rename).
+	SaveMetadata(ctx context.Context, documentUUID string, meta Metadata, content Content) error
+
+	// GetMetadata reads the .metadata and .content files for a document.
+	// Returns an error if the files do not exist.
+	GetMetadata(ctx context.Context, documentUUID string) (Metadata, Content, error)
+
+	// DeleteMetadata removes all sidecar files (.metadata, .content, .pagedata)
+	// for a document. Returns nil if the files do not exist.
+	DeleteMetadata(ctx context.Context, documentUUID string) error
+
+	// Exists returns true if the .metadata and .content files exist for a
+	// document.
+	Exists(ctx context.Context, documentUUID string) (bool, error)
 }
