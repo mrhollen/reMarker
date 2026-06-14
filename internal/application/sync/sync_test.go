@@ -395,11 +395,13 @@ func file(path, hash string, size int64, modTime time.Time) document.File {
 
 func entry(path, hash string, size int64, modTime, syncedAt time.Time) document.ManifestEntry {
 	return document.ManifestEntry{
-		Path:     path,
-		Hash:     hash,
-		Size:     size,
-		ModTime:  modTime,
-		SyncedAt: syncedAt,
+		DeviceUUID:  path,
+		DeviceType:  document.DocumentTypePDF,
+		LocalHash:   hash,
+		DeviceHash:  hash,
+		VisibleName: path,
+		Size:        size,
+		SyncedAt:    syncedAt,
 	}
 }
 
@@ -1033,9 +1035,6 @@ func TestExecute_ManifestTouched(t *testing.T) {
 	if manifestRepo.savedManifest == nil {
 		t.Fatal("manifest was not saved")
 	}
-	if manifestRepo.savedManifest.LastSync == nil {
-		t.Error("manifest LastSync should be set after sync")
-	}
 }
 
 func TestExecute_ContextCancellation(t *testing.T) {
@@ -1200,8 +1199,11 @@ func TestPullFile_TransfersContent(t *testing.T) {
 		t.Fatalf("expected 1 manifest entry, got %d", len(manifestRepo.savedManifest.Entries))
 	}
 	entry := manifestRepo.savedManifest.Entries[filePath]
-	if entry.Hash != "devicehash" {
-		t.Errorf("manifest hash = %q, want %q", entry.Hash, "devicehash")
+	if entry.LocalHash != "devicehash" {
+		t.Errorf("manifest localHash = %q, want %q", entry.LocalHash, "devicehash")
+	}
+	if entry.DeviceHash != "devicehash" {
+		t.Errorf("manifest deviceHash = %q, want %q", entry.DeviceHash, "devicehash")
 	}
 	if entry.Size != int64(len(fileContent)) {
 		t.Errorf("manifest size = %d, want %d", entry.Size, int64(len(fileContent)))
@@ -1333,14 +1335,14 @@ func TestPullFile_UpdatesManifestWithSourceFields(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest entry not created for pulled file")
 	}
-	if entry.Hash != "dev-hash" {
-		t.Errorf("manifest hash = %q, want %q", entry.Hash, "dev-hash")
+	if entry.LocalHash != "dev-hash" {
+		t.Errorf("manifest localHash = %q, want %q", entry.LocalHash, "dev-hash")
+	}
+	if entry.DeviceHash != "dev-hash" {
+		t.Errorf("manifest deviceHash = %q, want %q", entry.DeviceHash, "dev-hash")
 	}
 	if entry.Size != 7 {
 		t.Errorf("manifest size = %d, want 7", entry.Size)
-	}
-	if !entry.ModTime.Equal(now) {
-		t.Errorf("manifest modTime = %v, want %v", entry.ModTime, now)
 	}
 }
 
@@ -1438,8 +1440,11 @@ func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest entry not created for resolved conflict")
 	}
-	if entry.Hash != "localhash" {
-		t.Errorf("manifest hash = %q, want %q", entry.Hash, "localhash")
+	if entry.LocalHash != "localhash" {
+		t.Errorf("manifest localHash = %q, want %q", entry.LocalHash, "localhash")
+	}
+	if entry.DeviceHash != "localhash" {
+		t.Errorf("manifest deviceHash = %q, want %q", entry.DeviceHash, "localhash")
 	}
 }
 
@@ -1533,8 +1538,11 @@ func TestResolveConflict_DeviceWinner_LocalLoser(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest entry not created for resolved conflict")
 	}
-	if entry.Hash != "devicehash" {
-		t.Errorf("manifest hash = %q, want %q", entry.Hash, "devicehash")
+	if entry.LocalHash != "devicehash" {
+		t.Errorf("manifest localHash = %q, want %q", entry.LocalHash, "devicehash")
+	}
+	if entry.DeviceHash != "devicehash" {
+		t.Errorf("manifest deviceHash = %q, want %q", entry.DeviceHash, "devicehash")
 	}
 }
 
@@ -1628,8 +1636,11 @@ func TestResolveConflict_DeviceWinner_DeviceLoser(t *testing.T) {
 	if !ok {
 		t.Fatal("manifest entry not created for resolved conflict")
 	}
-	if entry.Hash != "localhash" {
-		t.Errorf("manifest hash = %q, want %q", entry.Hash, "localhash")
+	if entry.LocalHash != "localhash" {
+		t.Errorf("manifest localHash = %q, want %q", entry.LocalHash, "localhash")
+	}
+	if entry.DeviceHash != "localhash" {
+		t.Errorf("manifest deviceHash = %q, want %q", entry.DeviceHash, "localhash")
 	}
 }
 

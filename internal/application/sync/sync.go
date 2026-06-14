@@ -5,6 +5,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hollen/remarker/internal/domain/document"
 	domainErrors "github.com/hollen/remarker/internal/domain/errors"
@@ -107,7 +108,9 @@ func (uc *SyncUseCase) Execute(ctx context.Context) (*document.SyncResult, error
 	}
 
 	// Phase 4: Update manifest and save
-	manifest.Touch()
+	for _, action := range result.Actions {
+		manifest.Touch(action.Path)
+	}
 	if err := uc.manifestRepo.Save(ctx, manifest); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("save manifest: %w", err))
 	}
@@ -142,15 +145,15 @@ func (uc *SyncUseCase) executeAction(ctx context.Context, action document.SyncAc
 
 // pushFile transfers a file from local to device and updates the manifest.
 func (uc *SyncUseCase) pushFile(ctx context.Context, action document.SyncAction, manifest *document.Manifest) error {
-	if err := uc.deviceRepo.PutFile(ctx, action.Source); err != nil {
+	sourceFile := documentToFile(action.Source)
+	if err := uc.deviceRepo.PutFile(ctx, sourceFile); err != nil {
 		return fmt.Errorf("push to device: %w", err)
 	}
 	manifest.Set(action.Path, document.ManifestEntry{
-		Path:     action.Path,
-		Hash:     action.Source.Hash,
-		Size:     action.Source.Size,
-		ModTime:  action.Source.ModTime,
-		SyncedAt: action.Source.ModTime,
+		LocalHash:  action.Source.LocalHash,
+		DeviceHash: action.Source.LocalHash,
+		Size:       action.Source.Size,
+		SyncedAt:   time.Now(),
 	})
 	return nil
 }
@@ -163,15 +166,15 @@ func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction,
 	}
 	defer content.Close()
 
-	if err := uc.localRepo.PutFileContent(ctx, action.Source, content); err != nil {
+	sourceFile := documentToFile(action.Source)
+	if err := uc.localRepo.PutFileContent(ctx, sourceFile, content); err != nil {
 		return fmt.Errorf("pull to local: %w", err)
 	}
 	manifest.Set(action.Path, document.ManifestEntry{
-		Path:     action.Path,
-		Hash:     action.Source.Hash,
-		Size:     action.Source.Size,
-		ModTime:  action.Source.ModTime,
-		SyncedAt: action.Source.ModTime,
+		LocalHash:  action.Source.LocalHash,
+		DeviceHash: action.Source.LocalHash,
+		Size:       action.Source.Size,
+		SyncedAt:   time.Now(),
 	})
 	return nil
 }
@@ -180,8 +183,8 @@ func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction,
 // The newer file wins; the loser is preserved with a .conflict suffix on
 // both sides.
 //
-// Content-aware transfers: action.Source is the local file, action.Dest is
-// the device file. When content originates from device, we must use
+// Content-aware transfers: action.Source is the local document, action.Dest is
+// the device document. When content originates from device, we must use
 // GetFileContent + PutFileContent to transfer actual bytes. When content
 // originates from local, PutFile reads from the local filesystem.
 //
@@ -189,21 +192,24 @@ func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction,
 // gets overwritten by a subsequent push.
 func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.SyncAction, manifest *document.Manifest) error {
 	// Determine winner and loser based on modification time
-	var winner, loser document.File
+	var winnerDoc, loserDoc document.Document
 	winnerIsLocal := false
 	loserIsLocal := false
 
 	if action.Source.IsNewer(action.Dest) {
-		winner = action.Source
-		loser = action.Dest
+		winnerDoc = action.Source
+		loserDoc = action.Dest
 		winnerIsLocal = true
 		loserIsLocal = false
 	} else {
-		winner = action.Dest
-		loser = action.Source
+		winnerDoc = action.Dest
+		loserDoc = action.Source
 		winnerIsLocal = false
 		loserIsLocal = true
 	}
+
+	winner := documentToFile(winnerDoc)
+	loser := documentToFile(loserDoc)
 
 	conflictPath := action.Path + ".conflict"
 	conflictFile := document.File{
@@ -271,12 +277,22 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 
 	// Update manifest with winner
 	manifest.Set(action.Path, document.ManifestEntry{
-		Path:     action.Path,
-		Hash:     winner.Hash,
-		Size:     winner.Size,
-		ModTime:  winner.ModTime,
-		SyncedAt: winner.ModTime,
+		LocalHash:  winnerDoc.LocalHash,
+		DeviceHash: winnerDoc.LocalHash,
+		Size:       winnerDoc.Size,
+		SyncedAt:   time.Now(),
 	})
 
 	return nil
+}
+
+// documentToFile converts a Document (from SyncAction) to a File for use
+// with repository methods that expect File.
+func documentToFile(d document.Document) document.File {
+	return document.File{
+		Path:    d.LocalPath,
+		Hash:    d.LocalHash,
+		ModTime: d.ModTime,
+		Size:    d.Size,
+	}
 }

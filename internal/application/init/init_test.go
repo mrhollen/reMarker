@@ -68,11 +68,8 @@ func TestExecute(t *testing.T) {
 				if repo.saved == nil {
 					t.Fatal("manifest was not saved")
 				}
-				if repo.saved.Version != 1 {
-					t.Errorf("saved manifest Version = %d, want 1", repo.saved.Version)
-				}
-				if repo.saved.LastSync != nil {
-					t.Errorf("saved manifest LastSync = %v, want nil", repo.saved.LastSync)
+				if repo.saved.Version != 2 {
+					t.Errorf("saved manifest Version = %d, want 2", repo.saved.Version)
 				}
 				if repo.saved.Entries == nil {
 					t.Error("saved manifest Entries is nil, want empty map")

@@ -110,11 +110,11 @@ func (uc *StatusUseCase) Execute(ctx context.Context) (*StatusResult, error) {
 
 		if hasDevice && !hasLocal {
 			// File only on device — pull to local (unless already in manifest)
-			if !inManifest || entry.Hash != onDevice.Hash {
+			if !inManifest || entry.LocalHash != onDevice.Hash {
 				toLocal = append(toLocal, document.SyncAction{
 					ActionType: document.ActionPull,
 					Path:       path,
-					Source:     onDevice,
+					Source:     fileToDocument(onDevice),
 				})
 			}
 			continue
@@ -122,11 +122,11 @@ func (uc *StatusUseCase) Execute(ctx context.Context) (*StatusResult, error) {
 
 		if !hasDevice && hasLocal {
 			// File only on local — push to device (unless already in manifest)
-			if !inManifest || entry.Hash != onLocal.Hash {
+			if !inManifest || entry.LocalHash != onLocal.Hash {
 				toDevice = append(toDevice, document.SyncAction{
 					ActionType: document.ActionPush,
 					Path:       path,
-					Source:     onLocal,
+					Source:     fileToDocument(onLocal),
 				})
 			}
 			continue
@@ -148,4 +148,15 @@ func (uc *StatusUseCase) Execute(ctx context.Context) (*StatusResult, error) {
 		Conflicts: conflicts,
 		Manifest:  manifest,
 	}, nil
+}
+
+// fileToDocument converts a File (from filesystem scan) to a Document for use
+// in SyncAction.
+func fileToDocument(f document.File) document.Document {
+	return document.Document{
+		LocalPath: f.Path,
+		LocalHash: f.Hash,
+		ModTime:   f.ModTime,
+		Size:      f.Size,
+	}
 }

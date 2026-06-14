@@ -35,7 +35,7 @@ func (uc *InitUseCase) Execute(ctx context.Context) error {
 	}
 
 	manifest := &document.Manifest{
-		Version: 1,
+		Version: 2,
 		Entries: make(map[string]document.ManifestEntry),
 	}
 

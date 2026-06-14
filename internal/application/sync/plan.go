@@ -66,26 +66,26 @@ func planNew(path string, localFile document.File, onLocal bool, deviceFile docu
 			return &document.SyncAction{
 				ActionType: document.ActionPush,
 				Path:       path,
-				Source:     localFile,
+				Source:     fileToDocument(localFile),
 			}
 		}
 		return &document.SyncAction{
 			ActionType: document.ActionConflict,
 			Path:       path,
-			Source:     localFile,
-			Dest:       deviceFile,
+			Source:     fileToDocument(localFile),
+			Dest:       fileToDocument(deviceFile),
 		}
 	case onLocal && !onDevice:
 		return &document.SyncAction{
 			ActionType: document.ActionPush,
 			Path:       path,
-			Source:     localFile,
+			Source:     fileToDocument(localFile),
 		}
 	case !onLocal && onDevice:
 		return &document.SyncAction{
 			ActionType: document.ActionPull,
 			Path:       path,
-			Source:     deviceFile,
+			Source:     fileToDocument(deviceFile),
 		}
 	default:
 		// Not on either side and not in manifest — shouldn't happen, skip
@@ -96,8 +96,8 @@ func planNew(path string, localFile document.File, onLocal bool, deviceFile docu
 // planExisting handles files that are already tracked in the manifest.
 func planExisting(path string, localFile document.File, onLocal bool, deviceFile document.File, onDevice bool, manifestEntry document.ManifestEntry) *document.SyncAction {
 	// Determine if each side matches the manifest
-	localMatches := onLocal && localFile.Hash == manifestEntry.Hash
-	deviceMatches := onDevice && deviceFile.Hash == manifestEntry.Hash
+	localMatches := onLocal && localFile.Hash == manifestEntry.LocalHash
+	deviceMatches := onDevice && deviceFile.Hash == manifestEntry.LocalHash
 
 	switch {
 	case localMatches && deviceMatches:
@@ -123,22 +123,22 @@ func planExisting(path string, localFile document.File, onLocal bool, deviceFile
 		return &document.SyncAction{
 			ActionType: document.ActionPush,
 			Path:       path,
-			Source:     localFile,
+			Source:     fileToDocument(localFile),
 		}
 	case localMatches && !deviceMatches:
 		// Device changed, local matches manifest → pull
 		return &document.SyncAction{
 			ActionType: document.ActionPull,
 			Path:       path,
-			Source:     deviceFile,
+			Source:     fileToDocument(deviceFile),
 		}
 	default:
 		// Both sides differ from manifest → conflict
 		return &document.SyncAction{
 			ActionType: document.ActionConflict,
 			Path:       path,
-			Source:     localFile,
-			Dest:       deviceFile,
+			Source:     fileToDocument(localFile),
+			Dest:       fileToDocument(deviceFile),
 		}
 	}
 }
@@ -179,4 +179,15 @@ func uniquePaths(deviceMap, localMap map[string]document.File, manifest *documen
 	}
 
 	return paths
+}
+
+// fileToDocument converts a File (from filesystem scan) to a Document for use
+// in SyncAction. The DocumentType is inferred from the file extension.
+func fileToDocument(f document.File) document.Document {
+	return document.Document{
+		LocalPath: f.Path,
+		LocalHash: f.Hash,
+		ModTime:   f.ModTime,
+		Size:      f.Size,
+	}
 }

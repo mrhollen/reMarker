@@ -49,20 +49,14 @@ func TestLoad(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{
-			Version:  2,
-			LastSync: ptrTime(time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)),
-			Entries: map[string]document.ManifestEntry{
-				"doc1": {
-					Path:     "doc1",
-					Hash:     "abc123",
-					Size:     1024,
-					ModTime:  time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
-					SyncedAt: time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
-				},
-			},
-		}
-		if err := store.Save(ctx, manifest); err != nil {
+		manifest := document.NewManifest()
+		manifest.Set("doc1", document.ManifestEntry{
+			LocalHash:  "abc123",
+			DeviceHash: "abc123",
+			Size:       1024,
+			SyncedAt:   time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
+		})
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 
@@ -74,9 +68,6 @@ func TestLoad(t *testing.T) {
 		if got.Version != manifest.Version {
 			t.Errorf("Version = %d, want %d", got.Version, manifest.Version)
 		}
-		if got.LastSync == nil || !got.LastSync.Equal(*manifest.LastSync) {
-			t.Errorf("LastSync mismatch: got %v, want %v", got.LastSync, manifest.LastSync)
-		}
 		if len(got.Entries) != len(manifest.Entries) {
 			t.Fatalf("Entries count = %d, want %d", len(got.Entries), len(manifest.Entries))
 		}
@@ -84,8 +75,8 @@ func TestLoad(t *testing.T) {
 		if !ok {
 			t.Fatal("missing entry doc1")
 		}
-		if entry.Hash != "abc123" {
-			t.Errorf("entry.Hash = %q, want %q", entry.Hash, "abc123")
+		if entry.LocalHash != "abc123" {
+			t.Errorf("entry.LocalHash = %q, want %q", entry.LocalHash, "abc123")
 		}
 		if entry.Size != 1024 {
 			t.Errorf("entry.Size = %d, want %d", entry.Size, 1024)
@@ -139,8 +130,8 @@ func TestSave(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "sub", "dir", "manifest.json"))
 
-		manifest := &document.Manifest{Version: 1}
-		if err := store.Save(ctx, manifest); err != nil {
+		manifest := document.NewManifest()
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -154,20 +145,13 @@ func TestSave(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{
-			Version: 3,
-			LastSync: ptrTime(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)),
-			Entries: map[string]document.ManifestEntry{
-				"test": {
-					Path:     "test",
-					Hash:     "hash1",
-					Size:     500,
-					ModTime:  time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
-					SyncedAt: time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
-				},
-			},
-		}
-		if err := store.Save(ctx, manifest); err != nil {
+		manifest := document.NewManifest()
+		manifest.Set("test", document.ManifestEntry{
+			LocalHash: "hash1",
+			Size:      500,
+			SyncedAt:  time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
+		})
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -187,8 +171,8 @@ func TestSave(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{Version: 1}
-		if err := store.Save(ctx, manifest); err != nil {
+		manifest := document.NewManifest()
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -207,8 +191,8 @@ func TestSave(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{Version: 1}
-		if err := store.Save(ctx, manifest); err != nil {
+		manifest := document.NewManifest()
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -236,8 +220,8 @@ func TestExists(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{Version: 1}
-		if err := store.Save(ctx, manifest); err != nil {
+		manifest := document.NewManifest()
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -271,29 +255,21 @@ func TestRoundTrip(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		now := time.Date(2025, 6, 1, 12, 30, 0, 0, time.UTC)
-		manifest := &document.Manifest{
-			Version:  5,
-			LastSync: &now,
-			Entries: map[string]document.ManifestEntry{
-				"doc1": {
-					Path:     "doc1",
-					Hash:     "sha256:abc",
-					Size:     2048,
-					ModTime:  time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC),
-					SyncedAt: time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
-				},
-				"doc2": {
-					Path:     "doc2",
-					Hash:     "sha256:def",
-					Size:     4096,
-					ModTime:  time.Date(2025, 4, 2, 0, 0, 0, 0, time.UTC),
-					SyncedAt: time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
-				},
-			},
-		}
+		manifest := document.NewManifest()
+		manifest.Set("doc1", document.ManifestEntry{
+			LocalHash:  "sha256:abc",
+			DeviceHash: "sha256:abc",
+			Size:       2048,
+			SyncedAt:   time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
+		})
+		manifest.Set("doc2", document.ManifestEntry{
+			LocalHash:  "sha256:def",
+			DeviceHash: "sha256:def",
+			Size:       4096,
+			SyncedAt:   time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
+		})
 
-		if err := store.Save(ctx, manifest); err != nil {
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -305,9 +281,6 @@ func TestRoundTrip(t *testing.T) {
 		if got.Version != manifest.Version {
 			t.Errorf("Version = %d, want %d", got.Version, manifest.Version)
 		}
-		if got.LastSync == nil || !got.LastSync.Equal(*manifest.LastSync) {
-			t.Errorf("LastSync mismatch: got %v, want %v", got.LastSync, manifest.LastSync)
-		}
 		if len(got.Entries) != len(manifest.Entries) {
 			t.Fatalf("Entries count = %d, want %d", len(got.Entries), len(manifest.Entries))
 		}
@@ -317,17 +290,14 @@ func TestRoundTrip(t *testing.T) {
 				t.Errorf("missing entry %q", k)
 				continue
 			}
-			if gotEntry.Path != want.Path {
-				t.Errorf("entry %q Path = %q, want %q", k, gotEntry.Path, want.Path)
+			if gotEntry.LocalHash != want.LocalHash {
+				t.Errorf("entry %q LocalHash = %q, want %q", k, gotEntry.LocalHash, want.LocalHash)
 			}
-			if gotEntry.Hash != want.Hash {
-				t.Errorf("entry %q Hash = %q, want %q", k, gotEntry.Hash, want.Hash)
+			if gotEntry.DeviceHash != want.DeviceHash {
+				t.Errorf("entry %q DeviceHash = %q, want %q", k, gotEntry.DeviceHash, want.DeviceHash)
 			}
 			if gotEntry.Size != want.Size {
 				t.Errorf("entry %q Size = %d, want %d", k, gotEntry.Size, want.Size)
-			}
-			if !gotEntry.ModTime.Equal(want.ModTime) {
-				t.Errorf("entry %q ModTime = %v, want %v", k, gotEntry.ModTime, want.ModTime)
 			}
 			if !gotEntry.SyncedAt.Equal(want.SyncedAt) {
 				t.Errorf("entry %q SyncedAt = %v, want %v", k, gotEntry.SyncedAt, want.SyncedAt)
@@ -339,16 +309,12 @@ func TestRoundTrip(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{
-			Version: 1,
-			Entries: map[string]document.ManifestEntry{
-				"a": {Path: "a", Hash: "h1"},
-				"b": {Path: "b", Hash: "h2"},
-				"c": {Path: "c", Hash: "h3"},
-			},
-		}
+		manifest := document.NewManifest()
+		manifest.Set("a", document.ManifestEntry{LocalHash: "h1"})
+		manifest.Set("b", document.ManifestEntry{LocalHash: "h2"})
+		manifest.Set("c", document.ManifestEntry{LocalHash: "h3"})
 
-		if err := store.Save(ctx, manifest); err != nil {
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -367,65 +333,14 @@ func TestRoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("LastSync pointer nil is preserved", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		store := New(filepath.Join(tmpDir, "manifest.json"))
-
-		manifest := &document.Manifest{
-			Version:  1,
-			LastSync: nil,
-			Entries:  map[string]document.ManifestEntry{},
-		}
-
-		if err := store.Save(ctx, manifest); err != nil {
-			t.Fatalf("Save(): %v", err)
-		}
-
-		got, err := store.Load(ctx)
-		if err != nil {
-			t.Fatalf("Load(): %v", err)
-		}
-
-		if got.LastSync != nil {
-			t.Errorf("LastSync = %v, want nil", got.LastSync)
-		}
-	})
-
-	t.Run("LastSync pointer set is preserved", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		store := New(filepath.Join(tmpDir, "manifest.json"))
-
-		ts := time.Date(2025, 1, 15, 8, 30, 0, 0, time.UTC)
-		manifest := &document.Manifest{
-			Version:  1,
-			LastSync: &ts,
-			Entries:  map[string]document.ManifestEntry{},
-		}
-
-		if err := store.Save(ctx, manifest); err != nil {
-			t.Fatalf("Save(): %v", err)
-		}
-
-		got, err := store.Load(ctx)
-		if err != nil {
-			t.Fatalf("Load(): %v", err)
-		}
-
-		if got.LastSync == nil || !got.LastSync.Equal(ts) {
-			t.Errorf("LastSync = %v, want %v", got.LastSync, ts)
-		}
-	})
-
 	t.Run("Version is preserved", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{
-			Version: 99,
-			Entries: map[string]document.ManifestEntry{},
-		}
+		manifest := document.NewManifest()
+		manifest.Version = 99
 
-		if err := store.Save(ctx, manifest); err != nil {
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -443,12 +358,9 @@ func TestRoundTrip(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{
-			Version: 1,
-			Entries: map[string]document.ManifestEntry{},
-		}
+		manifest := document.NewManifest()
 
-		if err := store.Save(ctx, manifest); err != nil {
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -466,12 +378,12 @@ func TestRoundTrip(t *testing.T) {
 		tmpDir := t.TempDir()
 		store := New(filepath.Join(tmpDir, "manifest.json"))
 
-		manifest := &document.Manifest{
+		manifest := document.Manifest{
 			Version: 1,
 			Entries: nil,
 		}
 
-		if err := store.Save(ctx, manifest); err != nil {
+		if err := store.Save(ctx, &manifest); err != nil {
 			t.Fatalf("Save(): %v", err)
 		}
 
@@ -488,9 +400,4 @@ func TestRoundTrip(t *testing.T) {
 			t.Errorf("Entries should be empty, got %d entries", len(got.Entries))
 		}
 	})
-}
-
-// ptrTime is a helper to avoid repeating &time.Time{...} in tests.
-func ptrTime(t time.Time) *time.Time {
-	return &t
 }

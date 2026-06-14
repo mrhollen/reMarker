@@ -194,11 +194,13 @@ func file(path, hash string, size int64, modTime time.Time) document.File {
 
 func entry(path, hash string, size int64, modTime, syncedAt time.Time) document.ManifestEntry {
 	return document.ManifestEntry{
-		Path:     path,
-		Hash:     hash,
-		Size:     size,
-		ModTime:  modTime,
-		SyncedAt: syncedAt,
+		DeviceUUID:  path,
+		DeviceType:  document.DocumentTypePDF,
+		LocalHash:   hash,
+		DeviceHash:  hash,
+		VisibleName: path,
+		Size:        size,
+		SyncedAt:    syncedAt,
 	}
 }
 

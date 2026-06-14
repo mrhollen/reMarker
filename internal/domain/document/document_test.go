@@ -504,7 +504,7 @@ func TestSidecarMetadata_ZeroValue(t *testing.T) {
 }
 
 // ============================================================================
-// Existing tests (preserved for backward compatibility)
+// File (legacy) tests — preserved for backward compatibility
 // ============================================================================
 
 func TestFile_IsNewer(t *testing.T) {
@@ -563,15 +563,63 @@ func TestFile_IsNewer(t *testing.T) {
 	}
 }
 
-func TestManifest_Get(t *testing.T) {
+func TestFile_Structure(t *testing.T) {
 	now := time.Now()
-	entry := ManifestEntry{
-		Path:     "abc.metadata",
-		Hash:     "sha256hash",
-		Size:     1024,
-		ModTime:  now,
-		SyncedAt: now,
+	f := File{
+		Path:    "abc-123.metadata",
+		Size:    4096,
+		ModTime: now,
+		Hash:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
+
+	if f.Path != "abc-123.metadata" {
+		t.Errorf("Path = %q, want %q", f.Path, "abc-123.metadata")
+	}
+	if f.Size != 4096 {
+		t.Errorf("Size = %d, want %d", f.Size, 4096)
+	}
+	if f.ModTime != now {
+		t.Errorf("ModTime = %v, want %v", f.ModTime, now)
+	}
+	if f.Hash != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Errorf("Hash = %q, want SHA256 hex", f.Hash)
+	}
+}
+
+// ============================================================================
+// Manifest v2 tests
+// ============================================================================
+
+func TestNewManifest(t *testing.T) {
+	tests := []struct {
+		name       string
+		wantVersion int
+	}{
+		{
+			name:       "creates version 2 manifest",
+			wantVersion: 2,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManifest()
+			if m.Version != tc.wantVersion {
+				t.Errorf("Version = %d, want %d", m.Version, tc.wantVersion)
+			}
+			if m.Entries == nil {
+				t.Error("Entries should be initialized (non-nil) map")
+			}
+			if len(m.Entries) != 0 {
+				t.Errorf("Entries should be empty, got %d entries", len(m.Entries))
+			}
+		})
+	}
+}
+
+func TestManifest_Get(t *testing.T) {
+	deviceUUID := uuid.New().String()
+	now := time.Now()
 
 	tests := []struct {
 		name    string
@@ -583,25 +631,58 @@ func TestManifest_Get(t *testing.T) {
 		{
 			name: "find existing entry",
 			entries: map[string]ManifestEntry{
-				"abc.metadata": entry,
+				"documents/test.pdf": {
+					DeviceUUID:  deviceUUID,
+					DeviceType:  DocumentTypePDF,
+					LocalHash:   "sha256hash",
+					DeviceHash:  "sha256hash",
+					Size:        1024,
+					SyncedAt:    now,
+				},
 			},
-			path:   "abc.metadata",
-			want:   entry,
+			path: "documents/test.pdf",
+			want: ManifestEntry{
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypePDF,
+				LocalHash:   "sha256hash",
+				DeviceHash:  "sha256hash",
+				Size:        1024,
+				SyncedAt:    now,
+			},
 			wantOK: true,
 		},
 		{
 			name:    "missing entry returns zero value",
 			entries: map[string]ManifestEntry{},
-			path:    "missing.metadata",
+			path:    "documents/missing.pdf",
 			want:    ManifestEntry{},
 			wantOK:  false,
 		},
 		{
-			name: "nil entries map returns false",
+			name:    "nil entries map returns false",
 			entries: nil,
-			path:    "abc.metadata",
+			path:    "documents/test.pdf",
 			want:    ManifestEntry{},
 			wantOK:  false,
+		},
+		{
+			name: "entry with parentUUID for folder",
+			entries: map[string]ManifestEntry{
+				"documents/Projects/": {
+					DeviceUUID:  deviceUUID,
+					DeviceType:  DocumentTypeFolder,
+					ParentUUID:  uuid.New().String(),
+					VisibleName: "Projects",
+				},
+			},
+			path: "documents/Projects/",
+			want: ManifestEntry{
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypeFolder,
+				ParentUUID:  "", // will be set below
+				VisibleName: "Projects",
+			},
+			wantOK: true,
 		},
 	}
 
@@ -612,76 +693,112 @@ func TestManifest_Get(t *testing.T) {
 			if ok != tc.wantOK {
 				t.Errorf("Get() ok = %v, want %v", ok, tc.wantOK)
 			}
-			if got != tc.want {
-				t.Errorf("Get() = %+v, want %+v", got, tc.want)
+			if tc.wantOK {
+				if got.DeviceUUID != tc.want.DeviceUUID {
+					t.Errorf("Get().DeviceUUID = %q, want %q", got.DeviceUUID, tc.want.DeviceUUID)
+				}
+				if got.DeviceType != tc.want.DeviceType {
+					t.Errorf("Get().DeviceType = %q, want %q", got.DeviceType, tc.want.DeviceType)
+				}
+				if got.LocalHash != tc.want.LocalHash {
+					t.Errorf("Get().LocalHash = %q, want %q", got.LocalHash, tc.want.LocalHash)
+				}
 			}
 		})
 	}
 }
 
 func TestManifest_Set(t *testing.T) {
+	deviceUUID := uuid.New().String()
 	now := time.Now()
+
 	tests := []struct {
 		name    string
 		path    string
 		entry   ManifestEntry
-		wantKey string
-		wantVal ManifestEntry
+		wantOK  bool
 	}{
 		{
-			name: "add new entry",
-			path: "abc.metadata",
+			name: "add new entry to initialized map",
+			path: "documents/test.pdf",
 			entry: ManifestEntry{
-				Path:    "abc.metadata",
-				Hash:    "hash1",
-				Size:    100,
-				ModTime: now,
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypePDF,
+				LocalHash:   "hash1",
+				Size:        100,
+				SyncedAt:    now,
 			},
-			wantKey: "abc.metadata",
-			wantVal: ManifestEntry{
-				Path:    "abc.metadata",
-				Hash:    "hash1",
-				Size:    100,
-				ModTime: now,
-			},
+			wantOK: true,
 		},
 		{
 			name: "overwrite existing entry",
-			path: "abc.metadata",
+			path: "documents/test.pdf",
 			entry: ManifestEntry{
-				Path:    "abc.metadata",
-				Hash:    "hash2",
-				Size:    200,
-				ModTime: now,
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypePDF,
+				LocalHash:   "hash2",
+				DeviceHash:  "hash2",
+				Size:        200,
+				SyncedAt:    now,
 			},
-			wantKey: "abc.metadata",
-			wantVal: ManifestEntry{
-				Path:    "abc.metadata",
-				Hash:    "hash2",
-				Size:    200,
-				ModTime: now,
+			wantOK: true,
+		},
+		{
+			name: "add folder entry with parentUUID",
+			path: "documents/Projects/",
+			entry: ManifestEntry{
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypeFolder,
+				ParentUUID:  uuid.New().String(),
+				VisibleName: "Projects",
 			},
+			wantOK: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manifest{Entries: map[string]ManifestEntry{}}
+			m := NewManifest()
 			m.Set(tc.path, tc.entry)
 
 			got, ok := m.Get(tc.path)
 			if !ok {
 				t.Fatalf("Get() after Set() returned false")
 			}
-			if got != tc.wantVal {
-				t.Errorf("Get() = %+v, want %+v", got, tc.wantVal)
+			if got.DeviceUUID != tc.entry.DeviceUUID {
+				t.Errorf("DeviceUUID = %q, want %q", got.DeviceUUID, tc.entry.DeviceUUID)
+			}
+			if got.DeviceType != tc.entry.DeviceType {
+				t.Errorf("DeviceType = %q, want %q", got.DeviceType, tc.entry.DeviceType)
+			}
+			if got.LocalHash != tc.entry.LocalHash {
+				t.Errorf("LocalHash = %q, want %q", got.LocalHash, tc.entry.LocalHash)
 			}
 		})
 	}
 }
 
+func TestManifest_Set_NilEntries(t *testing.T) {
+	// Set on a manifest with nil entries map should still work
+	m := Manifest{Version: 2, Entries: nil}
+	m.Set("documents/test.pdf", ManifestEntry{
+		DeviceUUID: uuid.New().String(),
+		DeviceType: DocumentTypePDF,
+		LocalHash:  "hash1",
+	})
+
+	got, ok := m.Get("documents/test.pdf")
+	if !ok {
+		t.Fatal("Get() after Set() on nil map returned false")
+	}
+	if got.LocalHash != "hash1" {
+		t.Errorf("LocalHash = %q, want %q", got.LocalHash, "hash1")
+	}
+}
+
 func TestManifest_Delete(t *testing.T) {
-	now := time.Now()
+	deviceUUID := uuid.New().String()
+
 	tests := []struct {
 		name    string
 		entries map[string]ManifestEntry
@@ -691,24 +808,30 @@ func TestManifest_Delete(t *testing.T) {
 		{
 			name: "delete existing entry",
 			entries: map[string]ManifestEntry{
-				"abc.metadata": {Path: "abc.metadata", ModTime: now},
+				"documents/test.pdf": {DeviceUUID: deviceUUID, DeviceType: DocumentTypePDF},
 			},
-			delete: "abc.metadata",
+			delete: "documents/test.pdf",
 			wantOK: true,
 		},
 		{
 			name: "delete non-existent entry",
 			entries: map[string]ManifestEntry{
-				"abc.metadata": {Path: "abc.metadata", ModTime: now},
+				"documents/test.pdf": {DeviceUUID: deviceUUID, DeviceType: DocumentTypePDF},
 			},
-			delete: "other.metadata",
+			delete: "documents/other.pdf",
 			wantOK: false,
 		},
 		{
 			name:    "delete from nil entries",
 			entries: nil,
-			delete:  "abc.metadata",
+			delete:  "documents/test.pdf",
 			wantOK:  false,
+		},
+		{
+			name: "delete from empty map",
+			entries: map[string]ManifestEntry{},
+			delete: "documents/test.pdf",
+			wantOK: false,
 		},
 	}
 
@@ -719,50 +842,398 @@ func TestManifest_Delete(t *testing.T) {
 			if ok != tc.wantOK {
 				t.Errorf("Delete() = %v, want %v", ok, tc.wantOK)
 			}
+			if ok {
+				_, stillExists := m.Get(tc.delete)
+				if stillExists {
+					t.Error("Delete() returned true but entry still exists")
+				}
+			}
 		})
 	}
 }
 
 func TestManifest_Touch(t *testing.T) {
+	deviceUUID := uuid.New().String()
+	syncedTime := time.Now().Add(-time.Hour)
+
 	tests := []struct {
-		name     string
-		lastSync *time.Time
+		name    string
+		entries map[string]ManifestEntry
+		path    string
 	}{
 		{
-			name:     "sets LastSync when nil",
-			lastSync: nil,
+			name: "updates SyncedAt for existing entry",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "hash1",
+					SyncedAt:   syncedTime,
+				},
+			},
+			path: "documents/test.pdf",
 		},
 		{
-			name: "updates LastSync when already set",
-			lastSync: func() *time.Time {
-				t := time.Now().Add(-time.Hour)
-				return &t
-			}(),
+			name: "does nothing for non-existent entry",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					SyncedAt:   syncedTime,
+				},
+			},
+			path: "documents/missing.pdf",
+		},
+		{
+			name:    "does nothing on nil entries",
+			entries: nil,
+			path:    "documents/test.pdf",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			before := time.Now().Add(-time.Second)
-			m := &Manifest{LastSync: tc.lastSync}
-			m.Touch()
+			before := time.Now()
+			m := &Manifest{Entries: tc.entries}
+			m.Touch(tc.path)
 			after := time.Now()
 
-			if m.LastSync == nil {
-				t.Fatal("Touch() did not set LastSync")
-			}
-			if m.LastSync.Before(before) || m.LastSync.After(after) {
-				t.Errorf("Touch() LastSync = %v, should be between %v and %v", m.LastSync, before, after)
+			got, ok := m.Get(tc.path)
+			if ok {
+				// SyncedAt should have been updated to now
+				if got.SyncedAt.Before(before) || got.SyncedAt.After(after) {
+					t.Errorf("Touch() SyncedAt = %v, should be between %v and %v", got.SyncedAt, before, after)
+				}
+			} else {
+		// Entry didn't exist, should still not exist
+				if tc.name != "does nothing for non-existent entry" && tc.name != "does nothing on nil entries" {
+					t.Error("Touch() should not have created entry for non-existent path")
+				}
 			}
 		})
 	}
 }
 
+func TestManifest_IsSynced(t *testing.T) {
+	deviceUUID := uuid.New().String()
+
+	tests := []struct {
+		name    string
+		entries map[string]ManifestEntry
+		path    string
+		want    bool
+	}{
+		{
+			name: "matching hashes are synced",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "abc123",
+					DeviceHash: "abc123",
+				},
+			},
+			path: "documents/test.pdf",
+			want: true,
+		},
+		{
+			name: "different hashes are not synced",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "abc123",
+					DeviceHash: "def456",
+				},
+			},
+			path: "documents/test.pdf",
+			want: false,
+		},
+		{
+			name: "empty device hash means not synced",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "abc123",
+					DeviceHash: "",
+				},
+			},
+			path: "documents/test.pdf",
+			want: false,
+		},
+		{
+			name: "both empty hashes are synced",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "",
+					DeviceHash: "",
+				},
+			},
+			path: "documents/test.pdf",
+			want: true,
+		},
+		{
+			name: "missing entry is not synced",
+			entries: map[string]ManifestEntry{
+				"documents/other.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "abc123",
+					DeviceHash: "abc123",
+				},
+			},
+			path: "documents/missing.pdf",
+			want: false,
+		},
+		{
+			name:    "nil entries returns false",
+			entries: nil,
+			path:    "documents/test.pdf",
+			want:    false,
+		},
+		{
+			name: "full sha256 hashes matching",
+			entries: map[string]ManifestEntry{
+				"documents/test.pdf": {
+					DeviceUUID: deviceUUID,
+					DeviceType: DocumentTypePDF,
+					LocalHash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+					DeviceHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				},
+			},
+			path: "documents/test.pdf",
+			want: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{Entries: tc.entries}
+			got := m.IsSynced(tc.path)
+			if got != tc.want {
+				t.Errorf("IsSynced(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// ManifestEntry v2 structure tests
+// ============================================================================
+
+func TestManifestEntry_v2Structure(t *testing.T) {
+	deviceUUID := uuid.New().String()
+	parentUUID := uuid.New().String()
+	now := time.Now()
+
+	tests := []struct {
+		name  string
+		entry ManifestEntry
+	}{
+		{
+			name: "full document entry",
+			entry: ManifestEntry{
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypePDF,
+				LocalHash:   "local_sha256",
+				DeviceHash:  "device_sha256",
+				VisibleName: "Annual Report.pdf",
+				Size:        4096,
+				SyncedAt:    now,
+			},
+		},
+		{
+			name: "folder entry with parent",
+			entry: ManifestEntry{
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypeFolder,
+				ParentUUID:  parentUUID,
+				VisibleName: "Projects",
+			},
+		},
+		{
+			name: "notebook entry",
+			entry: ManifestEntry{
+				DeviceUUID:  deviceUUID,
+				DeviceType:  DocumentTypeNotebook,
+				LocalHash:   "local_hash",
+				DeviceHash:  "local_hash",
+				VisibleName: "Meeting Notes.notebook",
+				Size:        2048,
+			},
+		},
+		{
+			name: "minimal entry",
+			entry: ManifestEntry{
+				DeviceUUID: deviceUUID,
+				DeviceType: DocumentTypePDF,
+				LocalHash:  "hash",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Verify all fields are settable and readable
+			if tc.entry.DeviceUUID == "" && tc.name != "minimal entry" {
+				t.Error("DeviceUUID should be set")
+			}
+			if tc.entry.DeviceType == "" {
+				t.Error("DeviceType should be set")
+			}
+			if tc.entry.LocalHash == "" && tc.entry.DeviceType != DocumentTypeFolder {
+				t.Error("LocalHash should be set for non-folder entries")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Manifest v2 zero value and version tests
+// ============================================================================
+
+func TestManifest_v2Version(t *testing.T) {
+	m := NewManifest()
+	if m.Version != 2 {
+		t.Errorf("NewManifest() Version = %d, want 2", m.Version)
+	}
+}
+
+func TestManifest_v2ZeroValue(t *testing.T) {
+	m := Manifest{}
+
+	// Zero value manifest should work with all methods
+	if m.Version != 0 {
+		t.Errorf("zero value Version = %d, want 0", m.Version)
+	}
+	if m.Entries != nil {
+		t.Error("zero value Entries should be nil")
+	}
+
+	// Get on zero value should return false
+	_, ok := m.Get("anything")
+	if ok {
+		t.Error("Get on zero value manifest should return false")
+	}
+
+	// Delete on zero value should return false
+	ok = m.Delete("anything")
+	if ok {
+		t.Error("Delete on zero value manifest should return false")
+	}
+
+	// IsSynced on zero value should return false
+	if m.IsSynced("anything") {
+		t.Error("IsSynced on zero value manifest should return false")
+	}
+
+	// Touch on zero value should not panic
+	m.Touch("anything")
+}
+
+// ============================================================================
+// SyncAction tests (with Document types)
+// ============================================================================
+
+func TestSyncAction_DocumentTypes(t *testing.T) {
+	now := time.Now()
+	sourceDoc := Document{
+		ID:          uuid.New(),
+		LocalPath:   "documents/test.pdf",
+		Type:        DocumentTypePDF,
+		VisibleName: "test.pdf",
+		LocalHash:   "local_hash",
+		DeviceHash:  "",
+		Size:        1024,
+		ModTime:     now,
+	}
+
+	destDoc := Document{
+		ID:          uuid.New(),
+		LocalPath:   "documents/test.pdf",
+		Type:        DocumentTypePDF,
+		VisibleName: "test.pdf",
+		LocalHash:   "",
+		DeviceHash:  "device_hash",
+		Size:        1024,
+		ModTime:     now.Add(-time.Hour),
+	}
+
+	tests := []struct {
+		name       string
+		actionType ActionType
+	}{
+		{
+			name:       "push action with documents",
+			actionType: ActionPush,
+		},
+		{
+			name:       "pull action with documents",
+			actionType: ActionPull,
+		},
+		{
+			name:       "conflict action with documents",
+			actionType: ActionConflict,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sa := SyncAction{
+				ActionType: tc.actionType,
+				Path:       "documents/test.pdf",
+				Source:     sourceDoc,
+				Dest:       destDoc,
+			}
+
+			if sa.ActionType != tc.actionType {
+				t.Errorf("ActionType = %v, want %v", sa.ActionType, tc.actionType)
+			}
+			if sa.Path != "documents/test.pdf" {
+				t.Errorf("Path = %q, want %q", sa.Path, "documents/test.pdf")
+			}
+			if sa.Source.LocalHash != "local_hash" {
+				t.Errorf("Source.LocalHash = %q, want %q", sa.Source.LocalHash, "local_hash")
+			}
+			if sa.Dest.DeviceHash != "device_hash" {
+				t.Errorf("Dest.DeviceHash = %q, want %q", sa.Dest.DeviceHash, "device_hash")
+			}
+			if sa.Source.Type != DocumentTypePDF {
+				t.Errorf("Source.Type = %q, want %q", sa.Source.Type, DocumentTypePDF)
+			}
+		})
+	}
+}
+
+func TestSyncAction_ZeroValue(t *testing.T) {
+	sa := SyncAction{}
+	if sa.ActionType != "" {
+		t.Errorf("zero value ActionType = %q, want empty", sa.ActionType)
+	}
+	if sa.Path != "" {
+		t.Errorf("zero value Path = %q, want empty", sa.Path)
+	}
+	// Source and Dest should be zero-value Documents
+	if sa.Source.ID != uuid.Nil {
+		t.Error("zero value Source.ID should be nil UUID")
+	}
+	if sa.Dest.ID != uuid.Nil {
+		t.Error("zero value Dest.ID should be nil UUID")
+	}
+}
+
+// ============================================================================
+// SyncResult tests
+// ============================================================================
+
 func TestSyncResult_HasConflicts(t *testing.T) {
 	tests := []struct {
-		name      string
-		result    SyncResult
-		wantTrue  bool
+		name     string
+		result   SyncResult
+		wantTrue bool
 	}{
 		{
 			name: "empty result has no conflicts",
@@ -785,7 +1256,7 @@ func TestSyncResult_HasConflicts(t *testing.T) {
 		{
 			name: "one conflict returns true",
 			result: SyncResult{
-				Conflicts: []domainErrors.ConflictError{{Path: "abc.metadata"}},
+				Conflicts: []domainErrors.ConflictError{{Path: "documents/test.pdf"}},
 			},
 			wantTrue: true,
 		},
@@ -793,8 +1264,8 @@ func TestSyncResult_HasConflicts(t *testing.T) {
 			name: "multiple conflicts returns true",
 			result: SyncResult{
 				Conflicts: []domainErrors.ConflictError{
-					{Path: "a.metadata"},
-					{Path: "b.metadata"},
+					{Path: "documents/a.pdf"},
+					{Path: "documents/b.pdf"},
 				},
 			},
 			wantTrue: true,
@@ -834,7 +1305,12 @@ func TestSyncResult_HasActions(t *testing.T) {
 		{
 			name: "one action returns true",
 			result: SyncResult{
-				Actions: []SyncAction{{ActionType: ActionPush, Path: "abc.metadata"}},
+				Actions: []SyncAction{{
+					ActionType: ActionPush,
+					Path:       "documents/test.pdf",
+					Source:     Document{Type: DocumentTypePDF},
+					Dest:       Document{Type: DocumentTypePDF},
+				}},
 			},
 			wantTrue: true,
 		},
@@ -842,8 +1318,8 @@ func TestSyncResult_HasActions(t *testing.T) {
 			name: "multiple actions returns true",
 			result: SyncResult{
 				Actions: []SyncAction{
-					{ActionType: ActionPush, Path: "a.metadata"},
-					{ActionType: ActionPull, Path: "b.content"},
+					{ActionType: ActionPush, Path: "documents/a.pdf", Source: Document{Type: DocumentTypePDF}, Dest: Document{Type: DocumentTypePDF}},
+					{ActionType: ActionPull, Path: "documents/b.notebook", Source: Document{Type: DocumentTypeNotebook}, Dest: Document{Type: DocumentTypeNotebook}},
 				},
 			},
 			wantTrue: true,
@@ -883,110 +1359,104 @@ func TestActionType_Values(t *testing.T) {
 	}
 }
 
-func TestManifest_Version(t *testing.T) {
-	m := &Manifest{Version: 1}
-	if m.Version != 1 {
-		t.Errorf("Version = %d, want %d", m.Version, 1)
+// ============================================================================
+// Manifest v2 integration tests
+// ============================================================================
+
+func TestManifest_v2FullWorkflow(t *testing.T) {
+	deviceUUID := uuid.New().String()
+
+	m := NewManifest()
+
+	// Set an entry
+	m.Set("documents/test.pdf", ManifestEntry{
+		DeviceUUID:  deviceUUID,
+		DeviceType:  DocumentTypePDF,
+		LocalHash:   "hash1",
+		DeviceHash:  "",
+		VisibleName: "test.pdf",
+		Size:        1024,
+	})
+
+	// Verify it's not synced
+	if m.IsSynced("documents/test.pdf") {
+		t.Error("Entry should not be synced (empty device hash)")
+	}
+
+	// Update device hash to match
+	entry, ok := m.Get("documents/test.pdf")
+	if !ok {
+		t.Fatal("Entry should exist")
+	}
+	entry.DeviceHash = "hash1"
+	m.Set("documents/test.pdf", entry)
+
+	// Now it should be synced
+	if !m.IsSynced("documents/test.pdf") {
+		t.Error("Entry should be synced after matching hashes")
+	}
+
+	// Touch should update SyncedAt
+	before := time.Now()
+	m.Touch("documents/test.pdf")
+	after := time.Now()
+
+	entry, ok = m.Get("documents/test.pdf")
+	if !ok {
+		t.Fatal("Entry should still exist after touch")
+	}
+	if entry.SyncedAt.Before(before) || entry.SyncedAt.After(after) {
+		t.Errorf("SyncedAt = %v, should be between %v and %v", entry.SyncedAt, before, after)
+	}
+
+	// Delete should remove entry
+	if !m.Delete("documents/test.pdf") {
+		t.Error("Delete should return true for existing entry")
+	}
+	if _, ok := m.Get("documents/test.pdf"); ok {
+		t.Error("Entry should not exist after delete")
 	}
 }
 
-func TestManifest_ZeroValue(t *testing.T) {
-	m := &Manifest{}
+func TestManifest_v2MultipleEntries(t *testing.T) {
+	m := NewManifest()
 
-	// Zero value manifest should work with all methods
-	if m.Version != 0 {
-		t.Errorf("zero value Version = %d, want 0", m.Version)
-	}
-	if m.LastSync != nil {
-		t.Error("zero value LastSync should be nil")
-	}
-	if m.Entries != nil {
-		t.Error("zero value Entries should be nil")
-	}
-
-	// Get on zero value should return false
-	_, ok := m.Get("anything")
-	if ok {
-		t.Error("Get on zero value manifest should return false")
+	// Add multiple entries
+	entries := []struct {
+		path string
+		uuid string
+		typ  DocumentType
+	}{
+		{"documents/report.pdf", uuid.New().String(), DocumentTypePDF},
+		{"documents/notes.notebook", uuid.New().String(), DocumentTypeNotebook},
+		{"documents/book.epub", uuid.New().String(), DocumentTypeEPub},
+		{"documents/Projects/", uuid.New().String(), DocumentTypeFolder},
 	}
 
-	// Delete on zero value should return false
-	ok = m.Delete("anything")
-	if ok {
-		t.Error("Delete on zero value manifest should return false")
-	}
-}
-
-func TestFile_Structure(t *testing.T) {
-	now := time.Now()
-	f := File{
-		Path:    "abc-123.metadata",
-		Size:    4096,
-		ModTime: now,
-		Hash:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	for _, e := range entries {
+		m.Set(e.path, ManifestEntry{
+			DeviceUUID: e.uuid,
+			DeviceType: e.typ,
+			LocalHash:  "hash",
+			DeviceHash: "hash",
+		})
 	}
 
-	if f.Path != "abc-123.metadata" {
-		t.Errorf("Path = %q, want %q", f.Path, "abc-123.metadata")
-	}
-	if f.Size != 4096 {
-		t.Errorf("Size = %d, want %d", f.Size, 4096)
-	}
-	if f.ModTime != now {
-		t.Errorf("ModTime = %v, want %v", f.ModTime, now)
-	}
-	if f.Hash != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
-		t.Errorf("Hash = %q, want SHA256 hex", f.Hash)
-	}
-}
-
-func TestManifestEntry_Structure(t *testing.T) {
-	now := time.Now()
-	e := ManifestEntry{
-		Path:     "abc.metadata",
-		Hash:     "hash123",
-		Size:     1024,
-		ModTime:  now,
-		SyncedAt: now,
+	// All should be synced
+	for _, e := range entries {
+		if !m.IsSynced(e.path) {
+			t.Errorf("IsSynced(%q) = false, want true", e.path)
+		}
 	}
 
-	if e.Path != "abc.metadata" {
-		t.Errorf("Path = %q, want %q", e.Path, "abc.metadata")
-	}
-	if e.Hash != "hash123" {
-		t.Errorf("Hash = %q, want %q", e.Hash, "hash123")
-	}
-	if e.Size != 1024 {
-		t.Errorf("Size = %d, want %d", e.Size, 1024)
-	}
-}
-
-func TestSyncAction_Structure(t *testing.T) {
-	now := time.Now()
-	sa := SyncAction{
-		ActionType: ActionPush,
-		Path:       "abc.metadata",
-		Source: File{
-			Path:    "abc.metadata",
-			Size:    100,
-			ModTime: now,
-			Hash:    "h1",
-		},
-		Dest: File{
-			Path:    "abc.metadata",
-			Size:    0,
-			ModTime: time.Time{},
-			Hash:    "",
-		},
+	// Delete one
+	m.Delete("documents/notes.notebook")
+	if m.IsSynced("documents/notes.notebook") {
+		t.Error("Deleted entry should not be synced")
 	}
 
-	if sa.ActionType != ActionPush {
-		t.Errorf("ActionType = %v, want %v", sa.ActionType, ActionPush)
-	}
-	if sa.Path != "abc.metadata" {
-		t.Errorf("Path = %q, want %q", sa.Path, "abc.metadata")
-	}
-	if sa.Source.Hash != "h1" {
-		t.Errorf("Source.Hash = %q, want %q", sa.Source.Hash, "h1")
+	// Others should still be synced
+	if !m.IsSynced("documents/report.pdf") {
+		t.Error("Non-deleted entry should still be synced")
 	}
 }

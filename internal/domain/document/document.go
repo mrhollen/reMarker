@@ -5,7 +5,6 @@ package document
 
 import (
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -137,21 +136,36 @@ func (f File) IsNewer(other File) bool {
 	return f.ModTime.After(other.ModTime)
 }
 
-// ManifestEntry represents a single file entry tracked in the sync manifest.
+// ============================================================================
+// Manifest v2
+// ============================================================================
+
+// ManifestEntry represents a single document entry tracked in the sync manifest.
+// It maps a local path to its corresponding device state using UUIDs.
 type ManifestEntry struct {
-	Path     string    `json:"path"`
-	Hash     string    `json:"hash"`
-	Size     int64     `json:"size"`
-	ModTime  time.Time `json:"modTime"`
-	SyncedAt time.Time `json:"syncedAt"`
+	DeviceUUID  string       `json:"deviceUUID"`
+	DeviceType  DocumentType `json:"deviceType"`
+	LocalHash   string       `json:"localHash"`
+	DeviceHash  string       `json:"deviceHash,omitempty"`
+	ParentUUID  string       `json:"parentUUID,omitempty"`
+	VisibleName string       `json:"visibleName,omitempty"`
+	Size        int64        `json:"size,omitempty"`
+	SyncedAt    time.Time    `json:"syncedAt,omitempty"`
 }
 
-// Manifest tracks the sync state across all managed files.
+// Manifest tracks the sync state across all managed documents.
 // It provides the source of truth for what has been synced and when.
 type Manifest struct {
-	Version int                      `json:"version"`
-	LastSync *time.Time              `json:"lastSync,omitempty"`
-	Entries map[string]ManifestEntry `json:"entries"`
+	Version int                        `json:"version"`
+	Entries map[string]ManifestEntry   `json:"entries"`
+}
+
+// NewManifest creates a new version 2 manifest with an initialized entries map.
+func NewManifest() Manifest {
+	return Manifest{
+		Version: 2,
+		Entries: make(map[string]ManifestEntry),
+	}
 }
 
 // Get returns the manifest entry for the given path and true if found,
@@ -185,14 +199,39 @@ func (m *Manifest) Delete(path string) bool {
 	return existed
 }
 
-// Touch sets LastSync to the current time, marking the manifest as freshly
-// synced.
-func (m *Manifest) Touch() {
-	now := time.Now()
-	m.LastSync = &now
+// Touch updates the SyncedAt timestamp for a specific entry to the current time.
+// If the entry does not exist, it is a no-op.
+func (m *Manifest) Touch(path string) {
+	if m.Entries == nil {
+		return
+	}
+	entry, ok := m.Entries[path]
+	if !ok {
+		return
+	}
+	entry.SyncedAt = time.Now()
+	m.Entries[path] = entry
 }
 
-// ActionType represents what needs to happen for a file during a sync cycle.
+// IsSynced returns true if the entry at the given path has matching
+// LocalHash and DeviceHash, indicating it is in sync.
+// Returns false if the entry does not exist.
+func (m *Manifest) IsSynced(path string) bool {
+	if m.Entries == nil {
+		return false
+	}
+	entry, ok := m.Entries[path]
+	if !ok {
+		return false
+	}
+	return entry.LocalHash == entry.DeviceHash
+}
+
+// ============================================================================
+// Sync actions
+// ============================================================================
+
+// ActionType represents what needs to happen for a document during a sync cycle.
 type ActionType string
 
 const (
@@ -204,12 +243,12 @@ const (
 	ActionDeleteDevice ActionType = "delete_device"  // Delete on device
 )
 
-// SyncAction pairs a file path with its required action during a sync cycle.
+// SyncAction pairs a document path with its required action during a sync cycle.
 type SyncAction struct {
 	ActionType ActionType
 	Path       string
-	Source     File // Where to copy from
-	Dest       File // Where to copy to (or conflict info)
+	Source     Document // Where to copy from
+	Dest       Document // Where to copy to (or conflict info)
 }
 
 // SyncResult aggregates all actions, conflicts, and errors from a sync operation.
@@ -228,6 +267,3 @@ func (s *SyncResult) HasConflicts() bool {
 func (s *SyncResult) HasActions() bool {
 	return len(s.Actions) > 0
 }
-
-// Ensure required imports are used
-var _ = strings.Contains
