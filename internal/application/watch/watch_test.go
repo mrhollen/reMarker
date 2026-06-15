@@ -83,6 +83,7 @@ func (m *mockDeviceRepo) GetFileContent(_ context.Context, _ string) (io.ReadClo
 }
 
 func (m *mockDeviceRepo) ListDocuments(_ context.Context) ([]document.Document, error) {
+	m.listCount.Add(1)
 	return nil, nil
 }
 
@@ -106,7 +107,6 @@ type mockLocalRepo struct {
 }
 
 func (m *mockLocalRepo) ListFiles(_ context.Context) ([]document.File, error) {
-	m.listCount.Add(1)
 	return nil, nil
 }
 
@@ -124,6 +124,15 @@ func (m *mockLocalRepo) DeleteFile(_ context.Context, _ string) error {
 
 func (m *mockLocalRepo) PutFileContent(_ context.Context, _ document.File, _ io.Reader) error {
 	return nil
+}
+
+func (m *mockLocalRepo) GetFileContent(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (m *mockLocalRepo) ListDocuments(_ context.Context) ([]document.Document, error) {
+	m.listCount.Add(1)
+	return nil, nil
 }
 
 var _ document.LocalRepository = (*mockLocalRepo)(nil)
@@ -202,14 +211,14 @@ func TestRun_SyncsOnTicker(t *testing.T) {
 	<-done
 
 	// With 100ms interval and 400ms timeout, we should get at least 1 sync.
-	// Each sync calls ListFiles on both repos.
+	// Each sync calls ListDocuments on both repos.
 	deviceCalls := deviceRepo.listCount.Load()
 	localCalls := localRepo.listCount.Load()
 	if deviceCalls < 1 {
-		t.Errorf("expected at least 1 device ListFiles call from ticker, got %d", deviceCalls)
+		t.Errorf("expected at least 1 device ListDocuments call from ticker, got %d", deviceCalls)
 	}
 	if localCalls < 1 {
-		t.Errorf("expected at least 1 local ListFiles call from ticker, got %d", localCalls)
+		t.Errorf("expected at least 1 local ListDocuments call from ticker, got %d", localCalls)
 	}
 }
 
@@ -246,10 +255,10 @@ func TestRun_SyncsOnFsEvent(t *testing.T) {
 	deviceCalls := deviceRepo.listCount.Load()
 	localCalls := localRepo.listCount.Load()
 	if deviceCalls < 1 {
-		t.Errorf("expected at least 1 device ListFiles call from fs event, got %d", deviceCalls)
+		t.Errorf("expected at least 1 device ListDocuments call from fs event, got %d", deviceCalls)
 	}
 	if localCalls < 1 {
-		t.Errorf("expected at least 1 local ListFiles call from fs event, got %d", localCalls)
+		t.Errorf("expected at least 1 local ListDocuments call from fs event, got %d", localCalls)
 	}
 }
 

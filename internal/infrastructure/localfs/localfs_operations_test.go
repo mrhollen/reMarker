@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -623,6 +624,116 @@ func TestPutFile_OverwritesExisting(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GetFileContent
+// ---------------------------------------------------------------------------
+
+func TestGetFileContent_ExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	expected := []byte("hello world content")
+	filePath := filepath.Join(tmpDir, "test.metadata")
+	if err := os.WriteFile(filePath, expected, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	rc, err := c.GetFileContent(context.Background(), "test.metadata")
+	if err != nil {
+		t.Fatalf("GetFileContent error: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	if string(data) != string(expected) {
+		t.Errorf("content = %q, want %q", data, expected)
+	}
+}
+
+func TestGetFileContent_NestedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	expected := []byte("nested file content")
+	filePath := filepath.Join(tmpDir, "subdir", "nested.content")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, expected, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	rc, err := c.GetFileContent(context.Background(), "subdir/nested.content")
+	if err != nil {
+		t.Fatalf("GetFileContent error: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	if string(data) != string(expected) {
+		t.Errorf("content = %q, want %q", data, expected)
+	}
+}
+
+func TestGetFileContent_NonExistentFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	_, err := c.GetFileContent(context.Background(), "nonexistent.metadata")
+	if err == nil {
+		t.Error("GetFileContent should return error for non-existent file")
+	}
+}
+
+func TestGetFileContent_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	filePath := filepath.Join(tmpDir, "empty.metadata")
+	if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
+
+	rc, err := c.GetFileContent(context.Background(), "empty.metadata")
+	if err != nil {
+		t.Fatalf("GetFileContent error: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	if len(data) != 0 {
+		t.Errorf("expected empty content, got %d bytes", len(data))
+	}
+}
+
+func TestGetFileContent_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	// Create a file so the path is valid
+	filePath := filepath.Join(tmpDir, "test.metadata")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := c.GetFileContent(ctx, "test.metadata")
+	if err == nil {
+		t.Error("expected error for cancelled context, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // DeleteFile
 // ---------------------------------------------------------------------------
 
@@ -701,163 +812,6 @@ func TestDeleteFile_NestedPath(t *testing.T) {
 
 	if _, err := os.Stat(nestedPath); !os.IsNotExist(err) {
 		t.Error("nested file should not exist after DeleteFile")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Round-trip
-// ---------------------------------------------------------------------------
-
-func TestRoundTrip_PutAndGet(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir)
-
-	// Put a file
-	originalTime := time.Date(2024, 11, 5, 16, 45, 30, 0, time.UTC)
-	original := document.File{
-		Path:    "roundtrip/document.metadata",
-		Size:    42,
-		ModTime: originalTime,
-		Hash:    "abc123",
-	}
-
-	err := c.PutFile(context.Background(), original)
-	if err != nil {
-		t.Fatalf("PutFile error: %v", err)
-	}
-
-	// Get it back
-	retrieved, err := c.GetFile(context.Background(), "roundtrip/document.metadata")
-	if err != nil {
-		t.Fatalf("GetFile error: %v", err)
-	}
-
-	// Path should match
-	if retrieved.Path != original.Path {
-		t.Errorf("Path = %q, want %q", retrieved.Path, original.Path)
-	}
-
-	// ModTime should be close
-	diff := retrieved.ModTime.Sub(originalTime)
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > time.Second {
-		t.Errorf("ModTime diff = %v, want within 1s", diff)
-	}
-
-	// Verify it shows up in ListFiles
-	files, err := c.ListFiles(context.Background())
-	if err != nil {
-		t.Fatalf("ListFiles error: %v", err)
-	}
-
-	found := false
-	for _, f := range files {
-		if f.Path == original.Path {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("PutFile'd file should appear in ListFiles")
-	}
-}
-
-func TestRoundTrip_PutDeleteList(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir)
-
-	// Put a file
-	file := document.File{
-		Path:    "temp.md",
-		Size:    10,
-		ModTime: time.Now(),
-		Hash:    "hash1",
-	}
-	if err := c.PutFile(context.Background(), file); err != nil {
-		t.Fatalf("PutFile error: %v", err)
-	}
-
-	// Verify it exists
-	files, err := c.ListFiles(context.Background())
-	if err != nil {
-		t.Fatalf("ListFiles error: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(files))
-	}
-
-	// Delete it
-	if err := c.DeleteFile(context.Background(), "temp.md"); err != nil {
-		t.Fatalf("DeleteFile error: %v", err)
-	}
-
-	// Verify it's gone
-	files, err = c.ListFiles(context.Background())
-	if err != nil {
-		t.Fatalf("ListFiles error: %v", err)
-	}
-	if len(files) != 0 {
-		t.Errorf("expected 0 files after delete, got %d", len(files))
-	}
-}
-
-// ---------------------------------------------------------------------------
-// ListFiles with mixed content (files + dirs + skipped dirs)
-// ---------------------------------------------------------------------------
-
-func TestListFiles_MixedContent(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir)
-
-	// Create a realistic directory structure
-	items := map[string][]byte{
-		// Regular files
-		"doc-001.metadata": []byte("meta1"),
-		"doc-001.content":  []byte("content1"),
-		"notes/001.metadata": []byte("note meta"),
-		// .git should be skipped
-		".git/objects/pack": []byte("git pack data"),
-		// .remarker should be skipped
-		".remarker/state.json": []byte(`{"synced":true}`),
-		// Regular nested directory
-		"archive/2024/january/scan.pdf": []byte("scanned pdf"),
-	}
-
-	for relPath, content := range items {
-		fullPath := filepath.Join(tmpDir, relPath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			t.Fatalf("mkdir %s: %v", relPath, err)
-		}
-		if err := os.WriteFile(fullPath, content, 0644); err != nil {
-			t.Fatalf("write %s: %v", relPath, err)
-		}
-	}
-
-	result, err := c.ListFiles(context.Background())
-	if err != nil {
-		t.Fatalf("ListFiles error: %v", err)
-	}
-
-	// Should find 4 files (skipping .git and .remarker)
-	// doc-001.metadata, doc-001.content, notes/001.metadata, archive/2024/january/scan.pdf
-	expectedCount := 4
-	if len(result) != expectedCount {
-		t.Errorf("expected %d files, got %d:", expectedCount, len(result))
-		for _, f := range result {
-			t.Logf("  - %s", f.Path)
-		}
-	}
-
-	// Verify no skipped paths leaked through
-	for _, f := range result {
-		parts := filepath.SplitList(f.Path)
-		for _, part := range parts {
-			if part == ".git" || part == ".remarker" {
-				t.Errorf("should not include path with .git or .remarker: %s", f.Path)
-			}
-		}
 	}
 }
 

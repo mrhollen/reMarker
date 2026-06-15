@@ -67,6 +67,15 @@ type LocalRepository interface {
 	// File struct. Use this method instead of PutFile when you need to transfer
 	// actual file content (e.g., during pull sync).
 	PutFileContent(ctx context.Context, file File, content io.Reader) error
+
+	// GetFileContent returns an io.ReadCloser for reading raw file content.
+	// The caller MUST close the reader after use.
+	GetFileContent(ctx context.Context, path string) (io.ReadCloser, error)
+
+	// ListDocuments walks the local sync directory and returns Document
+	// entities for all regular files, computing SHA256 hashes and deriving
+	// document type and visible name from file extensions.
+	ListDocuments(ctx context.Context) ([]Document, error)
 }
 
 // ManifestRepository represents operations on the sync manifest.

@@ -81,6 +81,14 @@ func (l *localRepositoryImpl) PutFileContent(ctx context.Context, file File, con
 	return nil
 }
 
+func (l *localRepositoryImpl) GetFileContent(ctx context.Context, path string) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (l *localRepositoryImpl) ListDocuments(ctx context.Context) ([]Document, error) {
+	return nil, nil
+}
+
 // manifestRepositoryImpl is a dummy type used solely for compile-time
 // verification that ManifestRepository is a valid interface with the
 // expected method signatures.

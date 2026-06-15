@@ -124,10 +124,11 @@ type SidecarMetadata struct {
 // It carries the metadata needed to compare, transfer, and track files
 // between the local filesystem and the reMarkable device.
 type File struct {
-	Path    string    // Relative path from sync root (e.g., "abc-123.metadata")
-	Size    int64
-	ModTime time.Time
-	Hash    string // SHA256 hex string
+	Path      string    // Relative path from sync root (e.g., "abc-123.metadata")
+	LocalPath string    // Absolute local filesystem path, used by infrastructure layers to read source content
+	Size      int64
+	ModTime   time.Time
+	Hash      string // SHA256 hex string
 }
 
 // IsNewer returns true if this file's modification time is strictly after

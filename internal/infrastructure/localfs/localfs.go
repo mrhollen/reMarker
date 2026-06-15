@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/hollen/remarker/internal/domain/document"
 )
 
@@ -238,6 +239,24 @@ func (c *Client) PutFileContent(ctx context.Context, file document.File, content
 	return nil
 }
 
+// GetFileContent returns an io.ReadCloser for reading raw file content.
+// The path is relative to the base directory. The caller MUST close the
+// returned reader after use.
+func (c *Client) GetFileContent(ctx context.Context, path string) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("localfs get content: %w", err)
+	}
+
+	fullPath := filepath.Join(c.baseDir, path)
+
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("localfs open content %s: %w", path, err)
+	}
+
+	return f, nil
+}
+
 // DeleteFile removes a file from the local filesystem. The path is relative
 // to the base directory.
 func (c *Client) DeleteFile(ctx context.Context, path string) error {
@@ -253,6 +272,105 @@ func (c *Client) DeleteFile(ctx context.Context, path string) error {
 	}
 
 	return nil
+}
+
+// ListDocuments walks the local sync directory and returns Document entities
+// for all regular files. Paths are relative to the base directory. Directories
+// named ".git" and ".remarker" are skipped entirely. Results are sorted by
+// path for deterministic output. If the base directory does not exist, it is
+// created.
+func (c *Client) ListDocuments(ctx context.Context) ([]document.Document, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("localfs list documents: %w", err)
+	}
+
+	// Create baseDir if it doesn't exist
+	if err := os.MkdirAll(c.baseDir, 0755); err != nil {
+		return nil, fmt.Errorf("localfs mkdir %s: %w", c.baseDir, err)
+	}
+
+	var docs []document.Document
+
+	err := filepath.WalkDir(c.baseDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Check context before processing each entry
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("localfs list documents: %w", err)
+		}
+
+		// Skip directories (we only want regular files)
+		if d.IsDir() {
+			// Skip .git and .remarker directories entirely
+			if d.Name() == ".git" || d.Name() == ".remarker" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip non-regular files (symlinks, etc.)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeType != 0 {
+			return nil
+		}
+
+		// Compute relative path
+		relPath, err := filepath.Rel(c.baseDir, path)
+		if err != nil {
+			return fmt.Errorf("localfs rel path %s: %w", path, err)
+		}
+		// Normalize to forward slashes for cross-platform consistency
+		relPath = filepath.ToSlash(relPath)
+
+		// Open file to compute hash
+		f, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("localfs open %s: %w", relPath, err)
+		}
+
+		hash := computeHash(f)
+		f.Close()
+
+		// Derive document type from file extension
+		docType := document.DocumentTypePDF // default
+		ext := strings.TrimPrefix(filepath.Ext(relPath), ".")
+		switch strings.ToLower(ext) {
+		case "pdf":
+			docType = document.DocumentTypePDF
+		case "epub":
+			docType = document.DocumentTypeEPub
+		case "notebook":
+			docType = document.DocumentTypeNotebook
+		}
+
+		docs = append(docs, document.Document{
+			ID:          uuid.Nil,
+			LocalPath:   relPath,
+			Type:        docType,
+			VisibleName: filepath.Base(relPath),
+			LocalHash:   hash,
+			Size:        info.Size(),
+			ModTime:     info.ModTime(),
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("localfs walk %s: %w", c.baseDir, err)
+	}
+
+	// Sort by path for deterministic output
+	sort.Slice(docs, func(i, j int) bool {
+		return docs[i].LocalPath < docs[j].LocalPath
+	})
+
+	return docs, nil
 }
 
 // computeHash reads from the reader and returns the SHA256 hex digest.
