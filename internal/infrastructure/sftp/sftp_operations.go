@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,11 +119,14 @@ func (c *Client) PutFile(ctx context.Context, file document.File) error {
 	}
 
 	// Create temp file and write content
-	// We need to read the file content from the local filesystem
-	localPath := file.Path
-	f, err := os.Open(localPath)
+	// Read the file content from the local filesystem using file.LocalPath
+	// (file.Path is the device path, not the local filesystem path)
+	if file.LocalPath == "" {
+		return fmt.Errorf("sftp put: LocalPath is empty for file %s", file.Path)
+	}
+	f, err := os.Open(file.LocalPath)
 	if err != nil {
-		return fmt.Errorf("sftp put: open local file %s: %w", localPath, err)
+		return fmt.Errorf("sftp put: open local file %s: %w", file.LocalPath, err)
 	}
 	defer f.Close()
 
@@ -132,8 +136,11 @@ func (c *Client) PutFile(ctx context.Context, file document.File) error {
 		return fmt.Errorf("sftp create temp %s: %w", tmpPath, err)
 	}
 
-	// Copy content with context awareness
-	_, err = io.Copy(tmpFile, f)
+	// Copy content with context awareness.
+	// io.Copy does not support context cancellation, so we use a buffered
+	// read loop that checks ctx.Done() periodically. This prevents resource
+	// leaks (orphaned temp files) when the context is cancelled mid-transfer.
+	_, err = copyWithCtx(ctx, tmpFile, f)
 	if err != nil {
 		tmpFile.Close()
 		c.sftp.Remove(tmpPath) // Clean up temp file
@@ -189,6 +196,12 @@ func (c *Client) DeleteFile(ctx context.Context, path string) error {
 
 	err := c.sftp.Remove(fullPath)
 	if err != nil {
+		// Distinguish between "file not found" (likely already deleted) and
+		// other errors like permission denied or connection issues.
+		if strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "file does not exist") {
+			log.Printf("sftp delete: file %s not found on device (may have been removed)", path)
+			return nil
+		}
 		return fmt.Errorf("sftp remove %s: %w", path, err)
 	}
 
@@ -237,6 +250,38 @@ func randomHex(n int) string {
 	return hex.EncodeToString(bytes)
 }
 
+// copyWithCtx copies from src to dst, checking ctx.Done() after each
+// read to allow early cancellation. This prevents orphaned temp files
+// when a transfer is cancelled mid-way. Returns the number of bytes
+// copied and any error encountered.
+func copyWithCtx(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	const bufSize = 32 * 1024 // 32KB buffer
+	buf := make([]byte, bufSize)
+	var total int64
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			// Check context before writing to avoid writing after cancellation
+			select {
+			case <-ctx.Done():
+				return total, ctx.Err()
+			default:
+			}
+			written, werr := dst.Write(buf[:n])
+			total += int64(written)
+			if werr != nil {
+				return total, werr
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return total, nil
+			}
+			return total, err
+		}
+	}
+}
+
 // walkSFTP walks the SFTP directory tree similar to filepath.Walk.
 // It calls the walkFn for each file and directory found.
 // Paths passed to walkFn are relative to the root directory.
@@ -253,12 +298,21 @@ func walkSFTP(ctx context.Context, client sftpClient, root, relDir string, walkF
 		return walkFn(filepath.Join(root, relDir), nil, err)
 	}
 
-	for _, entry := range entries {
-		// Check context periodically
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+	// Tradeoff: checking ctx.Done() on every iteration creates unnecessary
+	// goroutine wakeups (select with default case still has overhead). Instead
+	// we check every 256 iterations. For typical xochitl directories with a few
+	// hundred files, the initial entry-level check plus the recursive call
+	// entry points provide sufficient cancellation responsiveness. The worst-case
+	// delay before detecting cancellation is ~256 entries, which is acceptable
+	// for a directory walk operation.
+	const ctxCheckInterval = 256
+	for i, entry := range entries {
+		if i%ctxCheckInterval == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 		}
 
 		relPath := filepath.Join(relDir, entry.Name())
@@ -304,9 +358,10 @@ func (c *Client) ListDocuments(ctx context.Context) ([]document.Document, error)
 			return nil
 		}
 
-		// Read and parse the metadata file — silently skip on parse errors
+		// Read and parse the metadata file — skip on parse errors with a log
 		meta, err := c.parseMetadataFile(relPath)
 		if err != nil {
+			log.Printf("sftp: skipping %s: parseMetadataFile error: %v", relPath, err)
 			return nil
 		}
 
@@ -330,6 +385,7 @@ func (c *Client) ListDocuments(ctx context.Context) ([]document.Document, error)
 
 		docID, err := uuid.Parse(meta.DeviceID)
 		if err != nil {
+			log.Printf("sftp: skipping %s: invalid device ID %q: %v", relPath, meta.DeviceID, err)
 			return nil
 		}
 
