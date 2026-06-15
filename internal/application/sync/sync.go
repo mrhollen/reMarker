@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hollen/remarker/internal/domain/document"
 	domainErrors "github.com/hollen/remarker/internal/domain/errors"
 )
@@ -66,18 +67,18 @@ func (uc *SyncUseCase) Execute(ctx context.Context) (*document.SyncResult, error
 	}
 
 	// Phase 1: Gather state from both sides
-	deviceFiles, err := uc.deviceRepo.ListFiles(ctx)
+	deviceDocs, err := uc.deviceRepo.ListDocuments(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list device files: %w", err)
+		return nil, fmt.Errorf("list device documents: %w", err)
 	}
 
-	localFiles, err := uc.localRepo.ListFiles(ctx)
+	localDocs, err := uc.localRepo.ListDocuments(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list local files: %w", err)
+		return nil, fmt.Errorf("list local documents: %w", err)
 	}
 
 	// Phase 2: Plan actions
-	actions := planSync(deviceFilesToDocuments(deviceFiles), localFilesToDocuments(localFiles), manifest)
+	actions := planSync(deviceDocs, localDocs, manifest)
 
 	// Phase 3: Execute actions
 	result := &document.SyncResult{}
@@ -145,15 +146,39 @@ func (uc *SyncUseCase) executeAction(ctx context.Context, action document.SyncAc
 
 // pushFile transfers a file from local to device and updates the manifest.
 func (uc *SyncUseCase) pushFile(ctx context.Context, action document.SyncAction, manifest *document.Manifest) error {
-	sourceFile := documentToFile(action.Source)
-	if err := uc.deviceRepo.PutFile(ctx, sourceFile); err != nil {
+	entry, exists := manifest.Get(action.Path)
+	var docID uuid.UUID
+	if exists && entry.DeviceUUID != "" {
+		var err error
+		docID, err = uuid.Parse(entry.DeviceUUID)
+		if err != nil {
+			docID = uuid.New()
+		}
+	} else {
+		docID = uuid.New()
+	}
+
+	doc := action.Source
+	doc.ID = docID
+
+	content, err := uc.localRepo.GetFileContent(ctx, action.Path)
+	if err != nil {
+		return fmt.Errorf("read local file: %w", err)
+	}
+	defer content.Close()
+
+	if err := uc.deviceRepo.PutDocument(ctx, doc, content); err != nil {
 		return fmt.Errorf("push to device: %w", err)
 	}
+
 	manifest.Set(action.Path, document.ManifestEntry{
-		LocalHash:  action.Source.LocalHash,
-		DeviceHash: action.Source.LocalHash,
-		Size:       action.Source.Size,
-		SyncedAt:   time.Now(),
+		DeviceUUID:  docID.String(),
+		DeviceType:  doc.Type,
+		LocalHash:   action.Source.LocalHash,
+		DeviceHash:  action.Source.LocalHash,
+		VisibleName: doc.VisibleName,
+		Size:        action.Source.Size,
+		SyncedAt:    time.Now(),
 	})
 	return nil
 }
@@ -297,32 +322,6 @@ func documentToFile(d document.Document) document.File {
 	}
 }
 
-// localFilesToDocuments converts local File objects to Document entities.
-// The File.Hash maps to Document.LocalHash.
-func localFilesToDocuments(files []document.File) []document.Document {
-	docs := make([]document.Document, len(files))
-	for i, f := range files {
-		docs[i] = document.Document{
-			LocalPath: f.Path,
-			LocalHash: f.Hash,
-			ModTime:   f.ModTime,
-			Size:      f.Size,
-		}
-	}
-	return docs
-}
 
-// deviceFilesToDocuments converts device File objects to Document entities.
-// The File.Hash maps to Document.DeviceHash.
-func deviceFilesToDocuments(files []document.File) []document.Document {
-	docs := make([]document.Document, len(files))
-	for i, f := range files {
-		docs[i] = document.Document{
-			LocalPath:  f.Path,
-			DeviceHash: f.Hash,
-			ModTime:    f.ModTime,
-			Size:       f.Size,
-		}
-	}
-	return docs
-}
+
+

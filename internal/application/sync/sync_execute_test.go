@@ -14,12 +14,12 @@ func TestExecute_ProgressCallback_SingleAction(t *testing.T) {
 	now := time.Now()
 	ctx := context.Background()
 
-	recorder := newProgressRecorder()
+recorder := newProgressRecorder()
 
-	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{
-			"abc.metadata": file("abc.metadata", "localhash", 100, now),
+uc := NewSyncUseCase(
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("abc.metadata", "localhash", 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -62,10 +62,10 @@ func TestExecute_ProgressCallback_MultipleActions(t *testing.T) {
 	recorder := newProgressRecorder()
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{
-			"a.metadata": file("a.metadata", "hash1", 100, now),
-			"b.metadata": file("b.metadata", "hash2", 200, now),
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("a.metadata", "hash1", 100, now),
+			localDoc("b.metadata", "hash2", 200, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -106,9 +106,9 @@ func TestExecute_ProgressCallback_NilWorks(t *testing.T) {
 	ctx := context.Background()
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{
-			"abc.metadata": file("abc.metadata", "localhash", 100, now),
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("abc.metadata", "localhash", 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -133,11 +133,11 @@ func TestExecute_ProgressCallback_NoActions(t *testing.T) {
 	recorder := newProgressRecorder()
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"synced.metadata": file("synced.metadata", "samehash", 100, now),
+		&mockDeviceRepository{docs: map[string]document.Document{
+			"synced.metadata": devDoc("synced.metadata", "samehash", 100, now),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
-			"synced.metadata": file("synced.metadata", "samehash", 100, now),
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("synced.metadata", "samehash", 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -186,8 +186,8 @@ func TestExecute_EmptySync(t *testing.T) {
 	// No files on either side, clean manifest → no actions
 	ctx := context.Background()
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{}},
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
@@ -216,12 +216,11 @@ func TestExecute_NewLocalFile(t *testing.T) {
 	// File only on local, not in manifest → push action
 	now := time.Now()
 	ctx := context.Background()
-	localFile := file("abc.metadata", "localhash", 100, now)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{
-			"abc.metadata": localFile,
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("abc.metadata", "localhash", 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -254,13 +253,12 @@ func TestExecute_NewDeviceFile(t *testing.T) {
 	// File only on device, not in manifest → pull action
 	now := time.Now()
 	ctx := context.Background()
-	deviceFile := file("xyz.content", "devicehash", 200, now)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"xyz.content": deviceFile,
+			&mockDeviceRepository{docs: map[string]document.Document{
+			"xyz.content": devDoc("xyz.content", "devicehash", 200, now),
 		}},
-		&mockLocalRepository{files: map[string]document.File{}},
+		&mockLocalRepository{docs: []document.Document{}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
 		},
@@ -293,14 +291,13 @@ func TestExecute_InSync(t *testing.T) {
 	now := time.Now()
 	ctx := context.Background()
 	hash := "samehash"
-	f := file("synced.metadata", hash, 100, now)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"synced.metadata": f,
+		&mockDeviceRepository{docs: map[string]document.Document{
+			"synced.metadata": devDoc("synced.metadata", hash, 100, now),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
-			"synced.metadata": f,
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("synced.metadata", hash, 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -332,11 +329,11 @@ func TestExecute_LocalModified(t *testing.T) {
 	manifestTime := now.Add(-time.Hour)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"doc.metadata": file("doc.metadata", manifestHash, 100, manifestTime),
+		&mockDeviceRepository{docs: map[string]document.Document{
+			"doc.metadata": devDoc("doc.metadata", manifestHash, 100, manifestTime),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
-			"doc.metadata": file("doc.metadata", localHash, 100, now),
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("doc.metadata", localHash, 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -372,11 +369,11 @@ func TestExecute_DeviceModified(t *testing.T) {
 	manifestTime := now.Add(-time.Hour)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"doc.metadata": file("doc.metadata", deviceHash, 100, now),
+		&mockDeviceRepository{docs: map[string]document.Document{
+			"doc.metadata": devDoc("doc.metadata", deviceHash, 100, now),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
-			"doc.metadata": file("doc.metadata", manifestHash, 100, manifestTime),
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("doc.metadata", manifestHash, 100, manifestTime),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -411,15 +408,13 @@ func TestExecute_Conflict(t *testing.T) {
 	manifestTime := now.Add(-2 * time.Hour)
 
 	// Local is newer
-	localFile := file("doc.metadata", "localhash", 100, now)
-	deviceFile := file("doc.metadata", "devicehash", 100, now.Add(-time.Hour))
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"doc.metadata": deviceFile,
+		&mockDeviceRepository{docs: map[string]document.Document{
+			"doc.metadata": devDoc("doc.metadata", "devicehash", 100, now.Add(-time.Hour)),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
-			"doc.metadata": localFile,
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("doc.metadata", "localhash", 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -460,15 +455,13 @@ func TestExecute_ConflictDeviceNewer(t *testing.T) {
 	manifestTime := now.Add(-2 * time.Hour)
 
 	// Device is newer
-	localFile := file("doc.metadata", "localhash", 100, now.Add(-time.Hour))
-	deviceFile := file("doc.metadata", "devicehash", 100, now)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
-			"doc.metadata": deviceFile,
+		&mockDeviceRepository{docs: map[string]document.Document{
+			"doc.metadata": devDoc("doc.metadata", "devicehash", 100, now),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
-			"doc.metadata": localFile,
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("doc.metadata", "localhash", 100, now.Add(-time.Hour)),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -496,12 +489,12 @@ func TestExecute_FileDeletedLocally(t *testing.T) {
 	manifestTime := now.Add(-time.Hour)
 
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			"deleted.metadata": file("deleted.metadata", manifestHash, 100, manifestTime),
+		docs: map[string]document.Document{
+			"deleted.metadata": devDoc("deleted.metadata", manifestHash, 100, manifestTime),
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{}, // file not on local
+		docs: []document.Document{}, // file not on local
 	}
 	manifestRepo := &mockManifestRepository{
 		manifest: manifest(1, map[string]document.ManifestEntry{
@@ -523,7 +516,7 @@ func TestExecute_FileDeletedLocally(t *testing.T) {
 	}
 
 	// File should still be on device
-	_, ok := deviceRepo.files["deleted.metadata"]
+	_, ok := deviceRepo.docs["deleted.metadata"]
 	if !ok {
 		t.Error("file was deleted from device, should have been preserved")
 	}
@@ -537,11 +530,11 @@ func TestExecute_FileDeletedOnDevice(t *testing.T) {
 	manifestTime := now.Add(-time.Hour)
 
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{}, // file not on device
+		docs: map[string]document.Document{}, // file not on device
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{
-			"deleted.metadata": file("deleted.metadata", manifestHash, 100, manifestTime),
+		docs: []document.Document{
+			localDoc("deleted.metadata", manifestHash, 100, manifestTime),
 		},
 	}
 	manifestRepo := &mockManifestRepository{
@@ -564,8 +557,14 @@ func TestExecute_FileDeletedOnDevice(t *testing.T) {
 	}
 
 	// File should still be on local
-	_, ok := localRepo.files["deleted.metadata"]
-	if !ok {
+	found := false
+	for _, d := range localRepo.docs {
+		if d.LocalPath == "deleted.metadata" {
+			found = true
+			break
+		}
+	}
+	if !found {
 		t.Error("file was deleted from local, should have been preserved")
 	}
 }
@@ -642,11 +641,11 @@ func TestExecute_TransferFails(t *testing.T) {
 
 	uc := NewSyncUseCase(
 		&mockDeviceRepository{
-			files:      map[string]document.File{},
-			putFileErr: transferErr,
+			docs:         map[string]document.Document{},
+			putDocumentErr: transferErr,
 		},
-		&mockLocalRepository{files: map[string]document.File{
-			"fail.metadata": file("fail.metadata", "newhash", 100, now),
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("fail.metadata", "newhash", 100, now),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -683,21 +682,21 @@ func TestExecute_MultipleFiles(t *testing.T) {
 	manifestTime := now.Add(-2 * time.Hour)
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{
+		&mockDeviceRepository{docs: map[string]document.Document{
 			// In sync
-			"synced.metadata": file("synced.metadata", "hash1", 100, now),
+			"synced.metadata": devDoc("synced.metadata", "hash1", 100, now),
 			// Device only → pull
-			"deviceonly.content": file("deviceonly.content", "hash2", 200, now),
+			"deviceonly.content": devDoc("deviceonly.content", "hash2", 200, now),
 			// Conflict (device newer)
-			"conflict.metadata": file("conflict.metadata", "devicehash", 100, now),
+			"conflict.metadata": devDoc("conflict.metadata", "devicehash", 100, now),
 		}},
-		&mockLocalRepository{files: map[string]document.File{
+		&mockLocalRepository{docs: []document.Document{
 			// In sync
-			"synced.metadata": file("synced.metadata", "hash1", 100, now),
+			localDoc("synced.metadata", "hash1", 100, now),
 			// Local only → push
-			"localonly.metadata": file("localonly.metadata", "hash3", 300, now),
+			localDoc("localonly.metadata", "hash3", 300, now),
 			// Conflict (local older)
-			"conflict.metadata": file("conflict.metadata", "localhash", 100, now.Add(-time.Hour)),
+			localDoc("conflict.metadata", "localhash", 100, now.Add(-time.Hour)),
 		}},
 		&mockManifestRepository{
 			manifest: manifest(1, map[string]document.ManifestEntry{
@@ -753,9 +752,9 @@ func TestExecute_ManifestSaved(t *testing.T) {
 	}
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{
-			"new.metadata": file("new.metadata", "newhash", 100, now),
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{
+			localDoc("new.metadata", "newhash", 100, now),
 		}},
 		manifestRepo,
 		nil,
@@ -780,8 +779,8 @@ func TestExecute_ManifestTouched(t *testing.T) {
 	}
 
 	uc := NewSyncUseCase(
-		&mockDeviceRepository{files: map[string]document.File{}},
-		&mockLocalRepository{files: map[string]document.File{}},
+		&mockDeviceRepository{docs: map[string]document.Document{}},
+		&mockLocalRepository{docs: []document.Document{}},
 		manifestRepo,
 		nil,
 	)

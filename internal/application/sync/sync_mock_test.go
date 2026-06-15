@@ -15,12 +15,14 @@ import (
 
 // mockDeviceRepository implements document.DeviceRepository for testing.
 type mockDeviceRepository struct {
-	files       map[string]document.File
-	getFileErr  error
-	putFileErr  error
-	deleteErr   error
-	listErr     error
-	putFileCall func(ctx context.Context, file document.File) error
+	docs            map[string]document.Document
+	files           map[string]document.File
+	getFileErr      error
+	putFileErr      error
+	putDocumentErr  error
+	deleteErr       error
+	listErr         error
+	putFileCall     func(ctx context.Context, file document.File) error
 	// getContent returns the raw content of a file.
 	getContent func(ctx context.Context, path string) (io.ReadCloser, error)
 }
@@ -77,11 +79,18 @@ func (m *mockDeviceRepository) GetFileContent(_ context.Context, path string) (i
 }
 
 func (m *mockDeviceRepository) ListDocuments(_ context.Context) ([]document.Document, error) {
-	return nil, nil
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var docs []document.Document
+	for _, d := range m.docs {
+		docs = append(docs, d)
+	}
+	return docs, nil
 }
 
 func (m *mockDeviceRepository) PutDocument(_ context.Context, _ document.Document, _ io.Reader) error {
-	return nil
+	return m.putDocumentErr
 }
 
 func (m *mockDeviceRepository) PutFolder(_ context.Context, _ document.Folder) error {
@@ -98,12 +107,16 @@ var _ document.DeviceRepository = (*mockDeviceRepository)(nil)
 // mockLocalRepository implements document.LocalRepository for testing.
 type mockLocalRepository struct {
 	files              map[string]document.File
+	docs               []document.Document
 	getFileErr         error
 	putFileErr         error
 	deleteErr          error
 	listErr            error
+	getContentErr      error
 	putFileCall        func(ctx context.Context, file document.File) error
 	putFileContentCall func(ctx context.Context, file document.File, content io.Reader) error
+	// getContent returns the raw content of a file.
+	getContent func(ctx context.Context, path string) (io.ReadCloser, error)
 }
 
 func (m *mockLocalRepository) ListFiles(_ context.Context) ([]document.File, error) {
@@ -148,6 +161,23 @@ func (m *mockLocalRepository) DeleteFile(_ context.Context, path string) error {
 	}
 	delete(m.files, path)
 	return nil
+}
+
+func (m *mockLocalRepository) GetFileContent(_ context.Context, path string) (io.ReadCloser, error) {
+	if m.getContentErr != nil {
+		return nil, m.getContentErr
+	}
+	if m.getContent != nil {
+		return m.getContent(context.Background(), path)
+	}
+	return io.NopCloser(strings.NewReader("test content")), nil
+}
+
+func (m *mockLocalRepository) ListDocuments(_ context.Context) ([]document.Document, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.docs, nil
 }
 
 func (m *mockLocalRepository) PutFileContent(ctx context.Context, file document.File, content io.Reader) error {
@@ -243,6 +273,24 @@ func (r *progressRecorder) asProgressFunc() ProgressFunc {
 
 func file(path, hash string, size int64, modTime time.Time) document.File {
 	return document.File{Path: path, Hash: hash, Size: size, ModTime: modTime}
+}
+
+func localDoc(path, localHash string, size int64, modTime time.Time) document.Document {
+	return document.Document{
+		LocalPath: path,
+		LocalHash: localHash,
+		ModTime:   modTime,
+		Size:      size,
+	}
+}
+
+func devDoc(path, deviceHash string, size int64, modTime time.Time) document.Document {
+	return document.Document{
+		LocalPath:  path,
+		DeviceHash: deviceHash,
+		ModTime:    modTime,
+		Size:       size,
+	}
 }
 
 func entry(path, hash string, size int64, modTime, syncedAt time.Time) document.ManifestEntry {

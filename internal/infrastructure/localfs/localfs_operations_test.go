@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -619,6 +620,116 @@ func TestPutFile_OverwritesExisting(t *testing.T) {
 	}
 	if diff > time.Second {
 		t.Errorf("ModTime = %v, want %v", info.ModTime(), newTime)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetFileContent
+// ---------------------------------------------------------------------------
+
+func TestGetFileContent_ExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	expected := []byte("hello world content")
+	filePath := filepath.Join(tmpDir, "test.metadata")
+	if err := os.WriteFile(filePath, expected, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	rc, err := c.GetFileContent(context.Background(), "test.metadata")
+	if err != nil {
+		t.Fatalf("GetFileContent error: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	if string(data) != string(expected) {
+		t.Errorf("content = %q, want %q", data, expected)
+	}
+}
+
+func TestGetFileContent_NestedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	expected := []byte("nested file content")
+	filePath := filepath.Join(tmpDir, "subdir", "nested.content")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filePath, expected, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	rc, err := c.GetFileContent(context.Background(), "subdir/nested.content")
+	if err != nil {
+		t.Fatalf("GetFileContent error: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	if string(data) != string(expected) {
+		t.Errorf("content = %q, want %q", data, expected)
+	}
+}
+
+func TestGetFileContent_NonExistentFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	_, err := c.GetFileContent(context.Background(), "nonexistent.metadata")
+	if err == nil {
+		t.Error("GetFileContent should return error for non-existent file")
+	}
+}
+
+func TestGetFileContent_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	filePath := filepath.Join(tmpDir, "empty.metadata")
+	if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
+
+	rc, err := c.GetFileContent(context.Background(), "empty.metadata")
+	if err != nil {
+		t.Fatalf("GetFileContent error: %v", err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	if len(data) != 0 {
+		t.Errorf("expected empty content, got %d bytes", len(data))
+	}
+}
+
+func TestGetFileContent_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	c := New(tmpDir)
+
+	// Create a file so the path is valid
+	filePath := filepath.Join(tmpDir, "test.metadata")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := c.GetFileContent(ctx, "test.metadata")
+	if err == nil {
+		t.Error("expected error for cancelled context, got nil")
 	}
 }
 

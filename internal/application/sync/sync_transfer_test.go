@@ -24,24 +24,25 @@ func TestPullFile_TransfersContent(t *testing.T) {
 	fileContent := "this is the actual file content from the device"
 
 	var receivedContent string
-	localFiles := make(map[string]document.File)
+	var pulledFile document.File
+
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			filePath: file(filePath, "devicehash", int64(len(fileContent)), now),
+		docs: map[string]document.Document{
+			filePath: devDoc(filePath, "devicehash", int64(len(fileContent)), now),
 		},
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(fileContent)), nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: localFiles,
+		docs: []document.Document{},
 		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
 			data, err := io.ReadAll(r)
 			if err != nil {
 				return err
 			}
 			receivedContent = string(data)
-			localFiles[f.Path] = f
+			pulledFile = f
 			return nil
 		},
 	}
@@ -72,13 +73,9 @@ func TestPullFile_TransfersContent(t *testing.T) {
 		t.Errorf("content mismatch: got %q, want %q", receivedContent, fileContent)
 	}
 
-	// Verify file metadata stored on local
-	localFile, ok := localRepo.files[filePath]
-	if !ok {
-		t.Fatal("file not stored on local after pull")
-	}
-	if localFile.Hash != "devicehash" {
-		t.Errorf("local file hash = %q, want %q", localFile.Hash, "devicehash")
+	// Verify file metadata from pull
+	if pulledFile.Hash != "devicehash" {
+		t.Errorf("pulled file hash = %q, want %q", pulledFile.Hash, "devicehash")
 	}
 
 	// Verify manifest was updated with correct fields
@@ -104,16 +101,16 @@ func TestPullFile_DeviceGetContentFails(t *testing.T) {
 	filePath := "note.content"
 	getContentErr := errors.New("SFTP read failed")
 
-	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			filePath: file(filePath, "devicehash", 200, now),
+deviceRepo := &mockDeviceRepository{
+		docs: map[string]document.Document{
+			filePath: devDoc(filePath, "devicehash", 200, now),
 		},
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return nil, getContentErr
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{},
+		docs: []document.Document{},
 	}
 	manifestRepo := &mockManifestRepository{
 		manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -151,15 +148,15 @@ func TestPullFile_LocalPutContentFails(t *testing.T) {
 	putContentErr := errors.New("disk full")
 
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			filePath: file(filePath, "devicehash", int64(len(fileContent)), now),
+		docs: map[string]document.Document{
+			filePath: devDoc(filePath, "devicehash", int64(len(fileContent)), now),
 		},
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(fileContent)), nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{},
+		docs: []document.Document{},
 		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
 			return putContentErr
 		},
@@ -198,15 +195,15 @@ func TestPullFile_UpdatesManifestWithSourceFields(t *testing.T) {
 	fileContent := "content"
 
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			filePath: file(filePath, "dev-hash", 7, now),
+		docs: map[string]document.Document{
+			filePath: devDoc(filePath, "dev-hash", 7, now),
 		},
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(fileContent)), nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{},
+		docs: []document.Document{},
 	}
 	manifestRepo := &mockManifestRepository{
 		manifest: manifest(1, map[string]document.ManifestEntry{}),
@@ -249,21 +246,15 @@ func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
 	localContent := "local winner content"
 	deviceContent := "device loser content"
 
-	localFile := file("doc.metadata", "localhash", int64(len(localContent)), now)
-	deviceFile := file("doc.metadata", "devicehash", int64(len(deviceContent)), now.Add(-time.Hour))
-
 	var conflictContentReceived string
 	var winnerPushedToDevice bool
 
-	deviceFiles := map[string]document.File{
-		"doc.metadata": deviceFile,
-	}
-	localFiles := map[string]document.File{
-		"doc.metadata": localFile,
+	deviceDocs := map[string]document.Document{
+		"doc.metadata": devDoc("doc.metadata", "devicehash", int64(len(deviceContent)), now.Add(-time.Hour)),
 	}
 
 	deviceRepo := &mockDeviceRepository{
-		files: deviceFiles,
+		docs: deviceDocs,
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(deviceContent)), nil
 		},
@@ -273,12 +264,14 @@ func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
 			} else if f.Path == "doc.metadata" {
 				winnerPushedToDevice = true
 			}
-			deviceFiles[f.Path] = f
+			deviceDocs[f.Path] = document.Document{LocalPath: f.Path, DeviceHash: f.Hash, Size: f.Size, ModTime: f.ModTime}
 			return nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: localFiles,
+		docs: []document.Document{
+			localDoc("doc.metadata", "localhash", int64(len(localContent)), now),
+		},
 		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
 			if f.Path == "doc.metadata.conflict" {
 				data, err := io.ReadAll(r)
@@ -287,7 +280,6 @@ func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
 				}
 				conflictContentReceived = string(data)
 			}
-			localFiles[f.Path] = f
 			return nil
 		},
 	}
@@ -318,7 +310,7 @@ func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
 	}
 
 	// Conflict copy should exist on device
-	if _, ok := deviceRepo.files["doc.metadata.conflict"]; !ok {
+	if _, ok := deviceRepo.docs["doc.metadata.conflict"]; !ok {
 		t.Error("conflict copy should exist on device")
 	}
 
@@ -347,21 +339,15 @@ func TestResolveConflict_DeviceWinner_LocalLoser(t *testing.T) {
 	localContent := "local loser content"
 	deviceContent := "device winner content"
 
-	localFile := file("doc.metadata", "localhash", int64(len(localContent)), now.Add(-time.Hour))
-	deviceFile := file("doc.metadata", "devicehash", int64(len(deviceContent)), now)
-
 	var winnerContentReceived string
 	var conflictPushedToDevice bool
 
-	deviceFiles := map[string]document.File{
-		"doc.metadata": deviceFile,
-	}
-	localFiles := map[string]document.File{
-		"doc.metadata": localFile,
+	deviceDocs := map[string]document.Document{
+		"doc.metadata": devDoc("doc.metadata", "devicehash", int64(len(deviceContent)), now),
 	}
 
 	deviceRepo := &mockDeviceRepository{
-		files: deviceFiles,
+		docs: deviceDocs,
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(deviceContent)), nil
 		},
@@ -371,12 +357,14 @@ func TestResolveConflict_DeviceWinner_LocalLoser(t *testing.T) {
 			} else if f.Path == "doc.metadata" {
 				// Winner pushed to device
 			}
-			deviceFiles[f.Path] = f
+			deviceDocs[f.Path] = document.Document{LocalPath: f.Path, DeviceHash: f.Hash, Size: f.Size, ModTime: f.ModTime}
 			return nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: localFiles,
+		docs: []document.Document{
+			localDoc("doc.metadata", "localhash", int64(len(localContent)), now.Add(-time.Hour)),
+		},
 		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
 			if f.Path == "doc.metadata" {
 				data, err := io.ReadAll(r)
@@ -385,7 +373,6 @@ func TestResolveConflict_DeviceWinner_LocalLoser(t *testing.T) {
 				}
 				winnerContentReceived = string(data)
 			}
-			localFiles[f.Path] = f
 			return nil
 		},
 	}
@@ -446,32 +433,28 @@ func TestResolveConflict_DeviceWinner_DeviceLoser(t *testing.T) {
 	deviceContent := "device loser content"
 
 	// Source=local (newer), Dest=device (older). Local wins, device loses.
-	localFile := file("doc.metadata", "localhash", int64(len(localContent)), now)
-	deviceFile := file("doc.metadata", "devicehash", int64(len(deviceContent)), now.Add(-time.Hour))
-
 	var conflictContentReceived string
 	getContentCalls := 0
 
-	deviceFiles := map[string]document.File{
-		"doc.metadata": deviceFile,
-	}
-	localFiles := map[string]document.File{
-		"doc.metadata": localFile,
+	deviceDocs := map[string]document.Document{
+		"doc.metadata": devDoc("doc.metadata", "devicehash", int64(len(deviceContent)), now.Add(-time.Hour)),
 	}
 
 	deviceRepo := &mockDeviceRepository{
-		files: deviceFiles,
+		docs: deviceDocs,
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			getContentCalls++
 			return io.NopCloser(strings.NewReader(deviceContent)), nil
 		},
 		putFileCall: func(_ context.Context, f document.File) error {
-			deviceFiles[f.Path] = f
+			deviceDocs[f.Path] = document.Document{LocalPath: f.Path, DeviceHash: f.Hash, Size: f.Size, ModTime: f.ModTime}
 			return nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: localFiles,
+		docs: []document.Document{
+			localDoc("doc.metadata", "localhash", int64(len(localContent)), now),
+		},
 		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
 			data, err := io.ReadAll(r)
 			if err != nil {
@@ -480,7 +463,6 @@ func TestResolveConflict_DeviceWinner_DeviceLoser(t *testing.T) {
 			if f.Path == "doc.metadata.conflict" {
 				conflictContentReceived = string(data)
 			}
-			localFiles[f.Path] = f
 			return nil
 		},
 	}
@@ -514,7 +496,7 @@ func TestResolveConflict_DeviceWinner_DeviceLoser(t *testing.T) {
 	}
 
 	// Conflict copy should exist on device
-	if _, ok := deviceRepo.files["doc.metadata.conflict"]; !ok {
+	if _, ok := deviceRepo.docs["doc.metadata.conflict"]; !ok {
 		t.Error("conflict copy should exist on device")
 	}
 
@@ -539,20 +521,17 @@ func TestResolveConflict_LocalWinner_DeviceLoser_DeviceGetContentFails(t *testin
 	manifestTime := now.Add(-2 * time.Hour)
 	getContentErr := errors.New("SFTP read failed")
 
-	localFile := file("doc.metadata", "localhash", 100, now)
-	deviceFile := file("doc.metadata", "devicehash", 100, now.Add(-time.Hour))
-
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			"doc.metadata": deviceFile,
+		docs: map[string]document.Document{
+			"doc.metadata": devDoc("doc.metadata", "devicehash", 100, now.Add(-time.Hour)),
 		},
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return nil, getContentErr
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{
-			"doc.metadata": localFile,
+		docs: []document.Document{
+			localDoc("doc.metadata", "localhash", 100, now),
 		},
 	}
 	manifestRepo := &mockManifestRepository{
@@ -592,20 +571,17 @@ func TestResolveConflict_DeviceWinner_LocalPutContentFails(t *testing.T) {
 	manifestTime := now.Add(-2 * time.Hour)
 	putContentErr := errors.New("disk full")
 
-	localFile := file("doc.metadata", "localhash", 100, now.Add(-time.Hour))
-	deviceFile := file("doc.metadata", "devicehash", 100, now)
-
 	deviceRepo := &mockDeviceRepository{
-		files: map[string]document.File{
-			"doc.metadata": deviceFile,
+		docs: map[string]document.Document{
+			"doc.metadata": devDoc("doc.metadata", "devicehash", 100, now),
 		},
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader("device content")), nil
 		},
 	}
 	localRepo := &mockLocalRepository{
-		files: map[string]document.File{
-			"doc.metadata": localFile,
+		docs: []document.Document{
+			localDoc("doc.metadata", "localhash", 100, now.Add(-time.Hour)),
 		},
 		putFileContentCall: func(_ context.Context, f document.File, r io.Reader) error {
 			return putContentErr

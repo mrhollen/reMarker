@@ -156,6 +156,14 @@ func (m *mockLocalRepository) PutFileContent(_ context.Context, file document.Fi
 	return nil
 }
 
+func (m *mockLocalRepository) GetFileContent(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (m *mockLocalRepository) ListDocuments(_ context.Context) ([]document.Document, error) {
+	return nil, nil
+}
+
 // Compile-time check.
 var _ document.LocalRepository = (*mockLocalRepository)(nil)
 
