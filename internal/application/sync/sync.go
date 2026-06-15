@@ -224,9 +224,10 @@ func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction,
 // both sides.
 //
 // Content-aware transfers: action.Source is the local document, action.Dest is
-// the device document. When content originates from device, we must use
-// GetFileContent + PutFileContent to transfer actual bytes. When content
-// originates from local, PutFile reads from the local filesystem.
+// the device document. Device-side writes use PutDocument (with sidecar files).
+// Local-side writes use PutFile/PutFileContent (no sidecars on local FS).
+// When content originates from device, we pull via GetFileContent and push
+// back via PutDocument.
 //
 // Ordering matters: we must pull device content before the device file
 // gets overwritten by a subsequent push.
@@ -248,34 +249,35 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 		loserIsLocal = true
 	}
 
-	winner := document.File{
-		Path:    winnerDoc.LocalPath,
-		Hash:    winnerDoc.LocalHash,
-		ModTime: winnerDoc.ModTime,
-		Size:    winnerDoc.Size,
-	}
-	loser := document.File{
-		Path:    loserDoc.LocalPath,
-		Hash:    loserDoc.LocalHash,
-		ModTime: loserDoc.ModTime,
-		Size:    loserDoc.Size,
-	}
-
 	conflictPath := action.Path + ".conflict"
-	conflictFile := document.File{
-		Path:    conflictPath,
-		Size:    loser.Size,
-		ModTime: loser.ModTime,
-		Hash:    loser.Hash,
-	}
 
 	// --- Create conflict copy of loser on both sides ---
 	if loserIsLocal {
-		// Loser content is in local filesystem — PutFile reads it correctly
-		if err := uc.deviceRepo.PutFile(ctx, conflictFile); err != nil {
+		// Loser content is in local filesystem
+		loserContent, err := uc.localRepo.GetFileContent(ctx, action.Path)
+		if err != nil {
+			return fmt.Errorf("get loser content from local: %w", err)
+		}
+		conflictDoc := document.Document{
+			ID:          uuid.New(),
+			LocalPath:   conflictPath,
+			Type:        loserDoc.Type,
+			VisibleName: loserDoc.VisibleName,
+			Size:        loserDoc.Size,
+			ModTime:     loserDoc.ModTime,
+		}
+		if err := uc.deviceRepo.PutDocument(ctx, conflictDoc, loserContent); err != nil {
+			loserContent.Close()
 			return fmt.Errorf("create conflict copy on device: %w", err)
 		}
-		if err := uc.localRepo.PutFile(ctx, conflictFile); err != nil {
+		loserContent.Close()
+
+		if err := uc.localRepo.PutFile(ctx, document.File{
+			Path:    conflictPath,
+			Size:    loserDoc.Size,
+			ModTime: loserDoc.ModTime,
+			Hash:    loserDoc.LocalHash,
+		}); err != nil {
 			return fmt.Errorf("create conflict copy on local: %w", err)
 		}
 	} else {
@@ -285,25 +287,56 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 			return fmt.Errorf("get loser content from device: %w", err)
 		}
 
-		if err := uc.localRepo.PutFileContent(ctx, conflictFile, loserContent); err != nil {
+		if err := uc.localRepo.PutFileContent(ctx, document.File{
+			Path:    conflictPath,
+			Size:    loserDoc.Size,
+			ModTime: loserDoc.ModTime,
+			Hash:    loserDoc.LocalHash,
+		}, loserContent); err != nil {
 			loserContent.Close()
 			return fmt.Errorf("create conflict copy on local: %w", err)
 		}
 		loserContent.Close()
 
-		// Now local has the conflict content — push to device
-		if err := uc.deviceRepo.PutFile(ctx, conflictFile); err != nil {
+		// Now local has the conflict content — push to device as Document
+		conflictContent, err := uc.localRepo.GetFileContent(ctx, conflictPath)
+		if err != nil {
+			return fmt.Errorf("get conflict content from local: %w", err)
+		}
+		conflictDoc := document.Document{
+			ID:          uuid.New(),
+			LocalPath:   conflictPath,
+			Type:        loserDoc.Type,
+			VisibleName: loserDoc.VisibleName,
+			Size:        loserDoc.Size,
+			ModTime:     loserDoc.ModTime,
+		}
+		if err := uc.deviceRepo.PutDocument(ctx, conflictDoc, conflictContent); err != nil {
+			conflictContent.Close()
 			return fmt.Errorf("create conflict copy on device: %w", err)
 		}
+		conflictContent.Close()
 	}
 
 	// --- Push winner to both sides ---
 	if winnerIsLocal {
-		// Winner content is in local filesystem — PutFile reads it correctly
-		if err := uc.deviceRepo.PutFile(ctx, winner); err != nil {
+		// Winner content is in local filesystem
+		winnerContent, err := uc.localRepo.GetFileContent(ctx, action.Path)
+		if err != nil {
+			return fmt.Errorf("get winner content from local: %w", err)
+		}
+		if err := uc.deviceRepo.PutDocument(ctx, winnerDoc, winnerContent); err != nil {
+			winnerContent.Close()
 			return fmt.Errorf("push winner to device: %w", err)
 		}
-		if err := uc.localRepo.PutFile(ctx, winner); err != nil {
+		winnerContent.Close()
+
+		if err := uc.localRepo.PutFile(ctx, document.File{
+			Path:    winnerDoc.LocalPath,
+			Hash:    winnerDoc.LocalHash,
+			ModTime: winnerDoc.ModTime,
+			Size:    winnerDoc.Size,
+		}); err != nil {
 			return fmt.Errorf("push winner to local: %w", err)
 		}
 	} else {
@@ -313,24 +346,38 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 			return fmt.Errorf("get winner content from device: %w", err)
 		}
 
-		if err := uc.localRepo.PutFileContent(ctx, winner, winnerContent); err != nil {
+		if err := uc.localRepo.PutFileContent(ctx, document.File{
+			Path:    winnerDoc.LocalPath,
+			Hash:    winnerDoc.LocalHash,
+			ModTime: winnerDoc.ModTime,
+			Size:    winnerDoc.Size,
+		}, winnerContent); err != nil {
 			winnerContent.Close()
 			return fmt.Errorf("pull winner to local: %w", err)
 		}
 		winnerContent.Close()
 
-		// Now local has the winner content — push to device
-		if err := uc.deviceRepo.PutFile(ctx, winner); err != nil {
+		// Now local has the winner content — push to device as fresh Document
+		winnerContent, err = uc.localRepo.GetFileContent(ctx, action.Path)
+		if err != nil {
+			return fmt.Errorf("get winner content from local: %w", err)
+		}
+		if err := uc.deviceRepo.PutDocument(ctx, winnerDoc, winnerContent); err != nil {
+			winnerContent.Close()
 			return fmt.Errorf("push winner to device: %w", err)
 		}
+		winnerContent.Close()
 	}
 
 	// Update manifest with winner
 	manifest.Set(action.Path, document.ManifestEntry{
-		LocalHash:  winnerDoc.LocalHash,
-		DeviceHash: winnerDoc.LocalHash,
-		Size:       winnerDoc.Size,
-		SyncedAt:   time.Now(),
+		DeviceUUID:  winnerDoc.ID.String(),
+		DeviceType:  winnerDoc.Type,
+		LocalHash:   winnerDoc.LocalHash,
+		DeviceHash:  winnerDoc.LocalHash,
+		VisibleName: winnerDoc.VisibleName,
+		Size:        winnerDoc.Size,
+		SyncedAt:    time.Now(),
 	})
 
 	return nil

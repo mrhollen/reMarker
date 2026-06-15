@@ -23,6 +23,7 @@ type mockDeviceRepository struct {
 	deleteErr       error
 	listErr         error
 	putFileCall     func(ctx context.Context, file document.File) error
+	putDocumentCall func(ctx context.Context, doc document.Document, content io.Reader) error
 	// getContent returns the raw content of a file.
 	getContent func(ctx context.Context, path string) (io.ReadCloser, error)
 }
@@ -89,8 +90,18 @@ func (m *mockDeviceRepository) ListDocuments(_ context.Context) ([]document.Docu
 	return docs, nil
 }
 
-func (m *mockDeviceRepository) PutDocument(_ context.Context, _ document.Document, _ io.Reader) error {
-	return m.putDocumentErr
+func (m *mockDeviceRepository) PutDocument(ctx context.Context, doc document.Document, content io.Reader) error {
+	if m.putDocumentCall != nil {
+		return m.putDocumentCall(ctx, doc, content)
+	}
+	if m.putDocumentErr != nil {
+		return m.putDocumentErr
+	}
+	if m.docs == nil {
+		m.docs = make(map[string]document.Document)
+	}
+	m.docs[doc.LocalPath] = doc
+	return nil
 }
 
 func (m *mockDeviceRepository) PutFolder(_ context.Context, _ document.Folder) error {

@@ -258,13 +258,13 @@ func TestResolveConflict_LocalWinner_LocalLoser(t *testing.T) {
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(deviceContent)), nil
 		},
-		putFileCall: func(_ context.Context, f document.File) error {
-			if f.Path == "doc.metadata.conflict" {
+		putDocumentCall: func(_ context.Context, doc document.Document, _ io.Reader) error {
+			if doc.LocalPath == "doc.metadata.conflict" {
 				// Conflict copy pushed to device
-			} else if f.Path == "doc.metadata" {
+			} else if doc.LocalPath == "doc.metadata" {
 				winnerPushedToDevice = true
 			}
-			deviceDocs[f.Path] = document.Document{LocalPath: f.Path, DeviceHash: f.Hash, Size: f.Size, ModTime: f.ModTime}
+			deviceDocs[doc.LocalPath] = doc
 			return nil
 		},
 	}
@@ -351,13 +351,13 @@ func TestResolveConflict_DeviceWinner_LocalLoser(t *testing.T) {
 		getContent: func(_ context.Context, path string) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(deviceContent)), nil
 		},
-		putFileCall: func(_ context.Context, f document.File) error {
-			if f.Path == "doc.metadata.conflict" {
+		putDocumentCall: func(_ context.Context, doc document.Document, _ io.Reader) error {
+			if doc.LocalPath == "doc.metadata.conflict" {
 				conflictPushedToDevice = true
-			} else if f.Path == "doc.metadata" {
+			} else if doc.LocalPath == "doc.metadata" {
 				// Winner pushed to device
 			}
-			deviceDocs[f.Path] = document.Document{LocalPath: f.Path, DeviceHash: f.Hash, Size: f.Size, ModTime: f.ModTime}
+			deviceDocs[doc.LocalPath] = doc
 			return nil
 		},
 	}
@@ -446,8 +446,8 @@ func TestResolveConflict_DeviceWinner_DeviceLoser(t *testing.T) {
 			getContentCalls++
 			return io.NopCloser(strings.NewReader(deviceContent)), nil
 		},
-		putFileCall: func(_ context.Context, f document.File) error {
-			deviceDocs[f.Path] = document.Document{LocalPath: f.Path, DeviceHash: f.Hash, Size: f.Size, ModTime: f.ModTime}
+		putDocumentCall: func(_ context.Context, doc document.Document, _ io.Reader) error {
+			deviceDocs[doc.LocalPath] = doc
 			return nil
 		},
 	}
