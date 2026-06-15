@@ -77,7 +77,7 @@ func (uc *SyncUseCase) Execute(ctx context.Context) (*document.SyncResult, error
 	}
 
 	// Phase 2: Plan actions
-	actions := planSync(deviceFiles, localFiles, manifest)
+	actions := planSync(deviceFilesToDocuments(deviceFiles), localFilesToDocuments(localFiles), manifest)
 
 	// Phase 3: Execute actions
 	result := &document.SyncResult{}
@@ -295,4 +295,34 @@ func documentToFile(d document.Document) document.File {
 		ModTime: d.ModTime,
 		Size:    d.Size,
 	}
+}
+
+// localFilesToDocuments converts local File objects to Document entities.
+// The File.Hash maps to Document.LocalHash.
+func localFilesToDocuments(files []document.File) []document.Document {
+	docs := make([]document.Document, len(files))
+	for i, f := range files {
+		docs[i] = document.Document{
+			LocalPath: f.Path,
+			LocalHash: f.Hash,
+			ModTime:   f.ModTime,
+			Size:      f.Size,
+		}
+	}
+	return docs
+}
+
+// deviceFilesToDocuments converts device File objects to Document entities.
+// The File.Hash maps to Document.DeviceHash.
+func deviceFilesToDocuments(files []document.File) []document.Document {
+	docs := make([]document.Document, len(files))
+	for i, f := range files {
+		docs[i] = document.Document{
+			LocalPath:  f.Path,
+			DeviceHash: f.Hash,
+			ModTime:    f.ModTime,
+			Size:       f.Size,
+		}
+	}
+	return docs
 }
