@@ -95,9 +95,11 @@ func (c *Client) PutDocument(ctx context.Context, doc document.Document, content
 	}
 
 	// Use provided UUID or generate a new one
-	docID := uuid.New().String()
+	var docID string
 	if doc.ID != uuid.Nil {
 		docID = doc.ID.String()
+	} else {
+		docID = uuid.New().String()
 	}
 	ext := string(doc.Type)
 	if ext == "" {
@@ -108,22 +110,13 @@ func (c *Client) PutDocument(ctx context.Context, doc document.Document, content
 	metadataPath := docID + ".metadata"
 	contentMetaPath := docID + ".content"
 
-	// Write content file
-	fullContentPath := filepath.Join(c.baseDir, contentPath)
-	contentFile, err := c.sftp.Create(fullContentPath)
+	// Write content file atomically
+	contentData, err := io.ReadAll(content)
 	if err != nil {
-		return fmt.Errorf("sftp create content %s: %w", contentPath, err)
+		return fmt.Errorf("sftp read content: %w", err)
 	}
-
-	_, err = io.Copy(contentFile, content)
-	if err != nil {
-		contentFile.Close()
-		c.sftp.Remove(fullContentPath)
-		return fmt.Errorf("sftp write content %s: %w", contentPath, err)
-	}
-	if err := contentFile.Close(); err != nil {
-		c.sftp.Remove(fullContentPath)
-		return fmt.Errorf("sftp close content %s: %w", contentPath, err)
+	if err := c.writeFileAtomically(contentPath, contentData); err != nil {
+		return err
 	}
 
 	// Write .metadata file atomically
@@ -184,6 +177,11 @@ func (c *Client) PutFolder(ctx context.Context, folder document.Folder) error {
 	})
 	if err != nil {
 		return fmt.Errorf("sftp marshal folder metadata: %w", err)
+	}
+
+	// Create the actual folder directory on the device
+	if err := c.sftp.MkdirAll(folderID); err != nil {
+		return fmt.Errorf("sftp mkdir %s: %w", folderID, err)
 	}
 
 	return c.writeFileAtomically(metadataPath, metadataJSON)
