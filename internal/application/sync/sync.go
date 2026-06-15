@@ -185,21 +185,36 @@ func (uc *SyncUseCase) pushFile(ctx context.Context, action document.SyncAction,
 
 // pullFile transfers a file from device to local and updates the manifest.
 func (uc *SyncUseCase) pullFile(ctx context.Context, action document.SyncAction, manifest *document.Manifest) error {
+	// action.Source is the device document with DeviceUUID from ListDocuments()
+	doc := action.Source
+
+	// Get file content from device
 	content, err := uc.deviceRepo.GetFileContent(ctx, action.Path)
 	if err != nil {
 		return fmt.Errorf("get file content from device: %w", err)
 	}
 	defer content.Close()
 
-	sourceFile := documentToFile(action.Source)
-	if err := uc.localRepo.PutFileContent(ctx, sourceFile, content); err != nil {
+	// Write to local filesystem
+	localFile := document.File{
+		Path:    action.Path,
+		Hash:    doc.LocalHash,
+		ModTime: doc.ModTime,
+		Size:    doc.Size,
+	}
+	if err := uc.localRepo.PutFileContent(ctx, localFile, content); err != nil {
 		return fmt.Errorf("pull to local: %w", err)
 	}
+
+	// Update manifest with full device metadata
 	manifest.Set(action.Path, document.ManifestEntry{
-		LocalHash:  action.Source.LocalHash,
-		DeviceHash: action.Source.LocalHash,
-		Size:       action.Source.Size,
-		SyncedAt:   time.Now(),
+		DeviceUUID:  doc.ID.String(),
+		DeviceType:  doc.Type,
+		LocalHash:   doc.LocalHash,
+		DeviceHash:  doc.LocalHash,
+		VisibleName: doc.VisibleName,
+		Size:        doc.Size,
+		SyncedAt:    time.Now(),
 	})
 	return nil
 }
@@ -233,8 +248,18 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 		loserIsLocal = true
 	}
 
-	winner := documentToFile(winnerDoc)
-	loser := documentToFile(loserDoc)
+	winner := document.File{
+		Path:    winnerDoc.LocalPath,
+		Hash:    winnerDoc.LocalHash,
+		ModTime: winnerDoc.ModTime,
+		Size:    winnerDoc.Size,
+	}
+	loser := document.File{
+		Path:    loserDoc.LocalPath,
+		Hash:    loserDoc.LocalHash,
+		ModTime: loserDoc.ModTime,
+		Size:    loserDoc.Size,
+	}
 
 	conflictPath := action.Path + ".conflict"
 	conflictFile := document.File{
@@ -310,18 +335,6 @@ func (uc *SyncUseCase) resolveConflict(ctx context.Context, action document.Sync
 
 	return nil
 }
-
-// documentToFile converts a Document (from SyncAction) to a File for use
-// with repository methods that expect File.
-func documentToFile(d document.Document) document.File {
-	return document.File{
-		Path:    d.LocalPath,
-		Hash:    d.LocalHash,
-		ModTime: d.ModTime,
-		Size:    d.Size,
-	}
-}
-
 
 
 
