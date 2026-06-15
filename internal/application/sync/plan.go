@@ -67,6 +67,9 @@ func planNew(path string, localDoc document.Document, onLocal bool, deviceDoc do
 		// Document exists on both sides but not in manifest.
 		// If hashes match, just push (either side is fine).
 		// If hashes differ, treat as conflict.
+		// Edge case: a new document not in the manifest may have an empty
+		// LocalHash on the local side while the device side has a hash.
+		// In that case the hashes differ and we produce a conflict action.
 		if localDoc.LocalHash == deviceDoc.DeviceHash {
 			return &document.SyncAction{
 				ActionType: document.ActionPush,
@@ -112,13 +115,14 @@ func planExisting(path string, localDoc document.Document, onLocal bool, deviceD
 			Path:       path,
 		}
 	case !onLocal && !onDevice:
-		// Missing from both sides — deleted everywhere, clean up manifest
+		// Missing from both sides — deleted everywhere, clean up manifest entry
 		return &document.SyncAction{
-			ActionType: document.ActionDeleteDevice,
+			ActionType: document.ActionDeleteLocal,
 			Path:       path,
 		}
 	case !onLocal && onDevice:
-		// Missing from local, present on device → deletion on local side
+		// Missing from local, present on device → clean up manifest entry.
+		// The file still exists on the device but we no longer track it.
 		return &document.SyncAction{
 			ActionType: document.ActionDeleteLocal,
 			Path:       path,
@@ -158,6 +162,9 @@ func planExisting(path string, localDoc document.Document, onLocal bool, deviceD
 // source. sync.go reads action.Source.LocalHash for manifest updates and
 // documentToFile conversions. For device-originated documents, LocalHash may
 // be empty while DeviceHash carries the actual hash.
+//
+// Edge case: if d is a zero-value Document (both LocalHash and DeviceHash are
+// empty strings), the condition evaluates to false and d is returned unchanged.
 func withLocalHash(d document.Document) document.Document {
 	if d.LocalHash == "" && d.DeviceHash != "" {
 		d.LocalHash = d.DeviceHash

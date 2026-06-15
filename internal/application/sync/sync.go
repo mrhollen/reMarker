@@ -152,12 +152,12 @@ func (uc *SyncUseCase) pushFile(ctx context.Context, action document.SyncAction,
 	entry, exists := manifest.Get(action.Path)
 	var docID uuid.UUID
 	if exists && entry.DeviceUUID != "" {
-		var err error
-		docID, err = uuid.Parse(entry.DeviceUUID)
-		if err != nil {
-			docID = uuid.New()
+		parsed, err := uuid.Parse(entry.DeviceUUID)
+		if err == nil {
+			docID = parsed
 		}
-	} else {
+	}
+	if docID == (uuid.UUID{}) {
 		docID = uuid.New()
 	}
 

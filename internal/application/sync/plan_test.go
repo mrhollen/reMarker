@@ -351,9 +351,9 @@ func TestPlanSync_EdgeCases(t *testing.T) {
 		if len(actions) != 1 {
 			t.Fatalf("expected 1 action, got %d", len(actions))
 		}
-		// Missing from both: falls through to delete_device (the last check in planExisting)
-		if actions[0].ActionType != document.ActionDeleteDevice {
-			t.Errorf("expected ActionDeleteDevice, got %q", actions[0].ActionType)
+		// Missing from both: clean up stale manifest entry via delete_local
+		if actions[0].ActionType != document.ActionDeleteLocal {
+			t.Errorf("expected ActionDeleteLocal, got %q", actions[0].ActionType)
 		}
 	})
 
