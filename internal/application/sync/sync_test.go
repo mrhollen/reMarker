@@ -79,6 +79,22 @@ func (m *mockDeviceRepository) GetFileContent(_ context.Context, path string) (i
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
+func (m *mockDeviceRepository) ListDocuments(_ context.Context) ([]document.Document, error) {
+	return nil, nil
+}
+
+func (m *mockDeviceRepository) PutDocument(_ context.Context, _ document.Document, _ io.Reader) error {
+	return nil
+}
+
+func (m *mockDeviceRepository) PutFolder(_ context.Context, _ document.Folder) error {
+	return nil
+}
+
+func (m *mockDeviceRepository) GetDocumentMetadata(_ context.Context, _ string) (document.SidecarMetadata, error) {
+	return document.SidecarMetadata{}, nil
+}
+
 // Compile-time check.
 var _ document.DeviceRepository = (*mockDeviceRepository)(nil)
 

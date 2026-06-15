@@ -40,6 +40,22 @@ func (d *deviceRepositoryImpl) GetFileContent(ctx context.Context, path string) 
 	return nil, nil
 }
 
+func (d *deviceRepositoryImpl) ListDocuments(ctx context.Context) ([]Document, error) {
+	return nil, nil
+}
+
+func (d *deviceRepositoryImpl) PutDocument(ctx context.Context, doc Document, content io.Reader) error {
+	return nil
+}
+
+func (d *deviceRepositoryImpl) PutFolder(ctx context.Context, folder Folder) error {
+	return nil
+}
+
+func (d *deviceRepositoryImpl) GetDocumentMetadata(ctx context.Context, deviceUUID string) (SidecarMetadata, error) {
+	return SidecarMetadata{}, nil
+}
+
 // localRepositoryImpl is a dummy type used solely for compile-time
 // verification that LocalRepository is a valid interface with the
 // expected method signatures.

@@ -82,6 +82,22 @@ func (m *mockDeviceRepo) GetFileContent(_ context.Context, _ string) (io.ReadClo
 	return nil, nil
 }
 
+func (m *mockDeviceRepo) ListDocuments(_ context.Context) ([]document.Document, error) {
+	return nil, nil
+}
+
+func (m *mockDeviceRepo) PutDocument(_ context.Context, _ document.Document, _ io.Reader) error {
+	return nil
+}
+
+func (m *mockDeviceRepo) PutFolder(_ context.Context, _ document.Folder) error {
+	return nil
+}
+
+func (m *mockDeviceRepo) GetDocumentMetadata(_ context.Context, _ string) (document.SidecarMetadata, error) {
+	return document.SidecarMetadata{}, nil
+}
+
 var _ document.DeviceRepository = (*mockDeviceRepo)(nil)
 
 // mockLocalRepo implements document.LocalRepository for testing.

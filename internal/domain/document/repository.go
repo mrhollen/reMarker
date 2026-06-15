@@ -26,6 +26,24 @@ type DeviceRepository interface {
 	// GetFileContent reads the raw content of a file from the device.
 	// Returns an io.ReadCloser that the caller MUST close.
 	GetFileContent(ctx context.Context, path string) (io.ReadCloser, error)
+
+	// ListDocuments walks the xochitl directory, finds all .metadata files,
+	// parses them, and returns Document entities. Only non-deleted documents
+	// are returned.
+	ListDocuments(ctx context.Context) ([]Document, error)
+
+	// PutDocument uploads a document's content file and generates .metadata
+	// and .content sidecar files on the device. Uses atomic writes
+	// (temp + rename) for all files.
+	PutDocument(ctx context.Context, doc Document, content io.Reader) error
+
+	// PutFolder creates a folder on the device by writing a .metadata file
+	// with folder type.
+	PutFolder(ctx context.Context, folder Folder) error
+
+	// GetDocumentMetadata reads and parses .metadata and .content sidecar
+	// files for a given device UUID.
+	GetDocumentMetadata(ctx context.Context, deviceUUID string) (SidecarMetadata, error)
 }
 
 // LocalRepository represents operations on the local filesystem.
@@ -67,7 +85,7 @@ type ManifestRepository interface {
 // Metadata represents the parsed contents of a reMarkable .metadata sidecar
 // file. It captures document identification, naming, and organizational state.
 type Metadata struct {
-	DeviceID         string    `json:"DeviceID"`
+	DeviceID         string    `json:"DocumentID"`
 	VisibleName      string    `json:"VisibleName"`
 	FileFormat       string    `json:"FileFormat"`
 	ParentFolderUUID string    `json:"ParentFolderUUID"`
